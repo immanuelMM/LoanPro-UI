@@ -364,7 +364,7 @@ register('loan-detail',function(page,area){
 
   var srows=''; (loan.schedule||[]).forEach(function(r){ srows+='<tr><td>'+r.period+'</td><td>'+fmt(r.payment)+'</td><td>'+fmt(r.principal)+'</td><td>'+fmt(r.interest)+'</td><td style="color:var(--primary)">'+fmt(r.balance)+'</td></tr>'; });
   var prows=''; if(!lPay.length){ prows='<tr><td colspan="4"><div class="empty-state" style="padding:30px"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
-  else { lPay.forEach(function(p){ prows+='<tr><td>'+fmtDate(p.date)+'</td><td class="td-amount">'+fmt(p.amount)+'</td><td style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></td></tr>'; }); }
+  else { lPay.forEach(function(p){ prows+='<tr><td>'+fmtDate(p.date)+'</td><td class="td-amount">'+fmt(p.amount)+'</td><td style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></div></td></tr>'; }); }
 
   area.innerHTML='<div class="page">'+
     '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Loan Detail</h1><p class="page-subtitle">'+(b?b.name:'?')+' · #'+loan.id.slice(-6).toUpperCase()+'</p></div>'+
@@ -409,6 +409,7 @@ register('loan-detail',function(page,area){
 
 function closeLoan(id){ var l=loans.find(function(x){ return x.id===id; }); if(!l) return; l.status='closed'; save(); toast('Loan closed.','info'); navigate('#loan-detail/'+id); }
 function delPayment(pid,lid){ payments=payments.filter(function(x){ return x.id!==pid; }); save(); toast('Payment removed.','info'); navigate('#loan-detail/'+lid); }
+function downloadReceipt(pid){ generateImageReceipt(pid); }
 
 // ── Payments ───────────────────────────────────────────────
 register('payments',function(_,area){
@@ -416,8 +417,8 @@ register('payments',function(_,area){
   var opts=al.map(function(l){ var b=borrowers.find(function(x){ return x.id===l.borrowerId; }); return '<option value="'+l.id+'">'+(b?b.name:'?')+' — '+fmt(l.principal)+' ('+l.id.slice(-6).toUpperCase()+')</option>'; }).join('');
   var rp=[].concat(payments).sort(function(a,b){ return b.date.localeCompare(a.date); }).slice(0,15);
   var rrows='';
-  if(!rp.length){ rrows='<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
-  else { rp.forEach(function(p){ var l=loans.find(function(x){ return x.id===p.loanId; }); var b=l?borrowers.find(function(x){ return x.id===l.borrowerId; }):null; rrows+='<tr><td>'+fmtDate(p.date)+'</td><td class="td-primary">'+(b?b.name:'—')+'</td><td style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+(l?l.id.slice(-6).toUpperCase():'—')+'</td><td class="td-amount">'+fmt(p.amount)+'</td><td style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td></tr>'; }); }
+  if(!rp.length){ rrows='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
+  else { rp.forEach(function(p){ var l=loans.find(function(x){ return x.id===p.loanId; }); var b=l?borrowers.find(function(x){ return x.id===l.borrowerId; }):null; rrows+='<tr><td>'+fmtDate(p.date)+'</td><td class="td-primary">'+(b?b.name:'—')+'</td><td style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+(l?l.id.slice(-6).toUpperCase():'—')+'</td><td class="td-amount">'+fmt(p.amount)+'</td><td style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button></td></tr>'; }); }
 
   area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">Record Payment</h1><p class="page-subtitle">Log a repayment against an active loan.</p></div></div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">'+
@@ -429,7 +430,7 @@ register('payments',function(_,area){
     '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary btn-lg" onclick="submitPay()">Record Payment</button></div></div>'+
     '<div class="card" id="payInfo"><div style="color:var(--text-muted);font-size:13px;text-align:center;padding:30px 0">Select a loan to see details.</div></div></div>'+
     '<div class="table-container" style="margin-top:24px"><div class="table-header"><span class="table-title">Recent Payments</span></div>'+
-    '<table><thead><tr><th>Date</th><th>Borrower</th><th>Loan ID</th><th>Amount</th><th>Note</th></tr></thead><tbody>'+rrows+'</tbody></table></div></div>';
+    '<table><thead><tr><th>Date</th><th>Borrower</th><th>Loan ID</th><th>Amount</th><th>Note</th><th>Action</th></tr></thead><tbody>'+rrows+'</tbody></table></div></div>';
 });
 function refPayInfo(){
   var lid=(document.getElementById('pyLoan')||{}).value||'';
@@ -479,9 +480,12 @@ function submitPay(){
 function recPay(lid,amt,date,note){
   var loan=loans.find(function(x){ return x.id===lid; });
   var b=loan?borrowers.find(function(x){ return x.id===loan.borrowerId; }):null;
-  payments.push({id:uid(),loanId:lid,amount:amt,date:date,note:note,createdAt:new Date().toISOString()});
+  var pid = uid();
+  payments.push({id:pid,loanId:lid,amount:amt,date:date,note:note,createdAt:new Date().toISOString()});
   logActivity('payment','Payment of '+fmt(amt)+' recorded for '+(b?b.name:'loan'));
-  save(); toast(fmt(amt)+' payment recorded!');
+  save(); 
+  toast(fmt(amt)+' payment recorded!');
+  setTimeout(function(){ generateImageReceipt(pid); }, 700);
 }
 
 // ── Reports ────────────────────────────────────────────────
@@ -651,6 +655,131 @@ function generatePDF(loanId) {
   } else {
     doc.save(fileName);
   }
+}
+
+function generateImageReceipt(payId) {
+  var p = payments.find(function(x) { return x.id === payId; });
+  if (!p) return;
+  var loan = loans.find(function(x) { return x.id === p.loanId; });
+  if (!loan) return;
+  var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
+  if (!b) return;
+
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  
+  // High DPI scaling
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = 400 * dpr;
+  canvas.height = 600 * dpr;
+  ctx.scale(dpr, dpr);
+  canvas.style.width = '400px';
+  canvas.style.height = '600px';
+
+  // Background & Shadow effect
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, 400, 600);
+  
+  // Header Gradient
+  var grad = ctx.createLinearGradient(0, 0, 400, 0);
+  grad.addColorStop(0, '#14b8a6');
+  grad.addColorStop(1, '#0d9488');
+  
+  // Logo
+  ctx.fillStyle = grad;
+  ctx.font = 'bold 34px "Inter", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('LoanPro', 200, 70);
+  
+  ctx.fillStyle = '#64748b';
+  ctx.font = '600 12px "Inter", sans-serif';
+  ctx.fillText('OFFICIAL PAYMENT RECEIPT', 200, 95);
+
+  ctx.strokeStyle = '#f1f5f9';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(40, 115); ctx.lineTo(360, 115); ctx.stroke();
+
+  // Details
+  ctx.textAlign = 'left';
+  ctx.font = '13px "Inter", sans-serif';
+  ctx.fillStyle = '#94a3b8';
+  var y = 150;
+  
+  ctx.fillText('DATE', 40, y);
+  ctx.fillText('RECEIPT NO.', 40, y + 40);
+  ctx.fillText('LOAN REFERENCE', 40, y + 80);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#1e293b';
+  ctx.font = 'bold 15px "Inter", sans-serif';
+  ctx.fillText(fmtDate(p.date), 360, y);
+  ctx.fillText(p.id.slice(-8).toUpperCase(), 360, y + 40);
+  ctx.fillText(loan.id.slice(-6).toUpperCase(), 360, y + 80);
+
+  y = 260;
+  ctx.strokeStyle = '#f1f5f9';
+  ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(360, y); ctx.stroke();
+
+  y += 40;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '13px "Inter", sans-serif';
+  ctx.fillText('BORROWER', 40, y);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 17px "Inter", sans-serif';
+  ctx.fillText(b.name, 360, y);
+
+  y += 40;
+  ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(360, y); ctx.stroke();
+
+  // Amount Section
+  y += 60;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#64748b';
+  ctx.font = '600 12px "Inter", sans-serif';
+  ctx.fillText('TOTAL AMOUNT PAID', 200, y);
+  
+  y += 45;
+  ctx.fillStyle = '#14b8a6';
+  ctx.font = 'bold 38px "Inter", sans-serif';
+  ctx.fillText(fmt(p.amount), 200, y);
+
+  // Remarks
+  y += 45;
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'italic 13px "Inter", sans-serif';
+  var note = p.note || 'Regular Loan Repayment';
+  ctx.fillText('"' + note + '"', 200, y);
+
+  // Footer / Balance
+  y = 500;
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(40, y, 320, 45);
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.strokeRect(40, y, 320, 45);
+  
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#64748b';
+  ctx.font = '600 12px "Inter", sans-serif';
+  ctx.fillText('REMAINING BALANCE', 55, y + 27);
+  
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#f43f5e';
+  ctx.font = 'bold 16px "Inter", sans-serif';
+  ctx.fillText(fmt(loanOutstanding(loan)), 345, y + 27);
+
+  y = 575;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '10px "Inter", sans-serif';
+  ctx.fillText('Thank you! This is a system-generated receipt.', 200, y);
+
+  // Download Action
+  var link = document.createElement('a');
+  link.download = 'Receipt_' + b.name.replace(/ /g, '_') + '_' + p.id.slice(-6).toUpperCase() + '.png';
+  link.href = canvas.toDataURL('image/png', 1.0);
+  link.click();
 }
 
 // ── Seed Demo Data ─────────────────────────────────────────
