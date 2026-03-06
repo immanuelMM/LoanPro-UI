@@ -984,6 +984,16 @@ tbody td {
     color: white;
 }
 
+.icon-btn-receipt {
+    background: rgba(20, 184, 166, 0.15);
+    color: #14b8a6;
+}
+
+.icon-btn-receipt:hover {
+    background: #14b8a6;
+    color: white;
+}
+
 /* Empty State */
 .empty-state {
     padding: 60px 20px;
