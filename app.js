@@ -327,7 +327,6 @@ function submitNewLoan(){
   logActivity('loan','Loan of '+fmt(p)+' created for '+(b?b.name:'borrower'));
   save(); toast('Loan created!'); 
   setTimeout(function(){ 
-    generatePDF(loan.id); 
     if(settings.auto_send && b && b.email) {
       sendLoanEmail(loan.id);
     }
