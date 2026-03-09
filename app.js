@@ -441,7 +441,21 @@ register('loan-detail',function(page,area){
     '</div></div></div>';
 });
 
-function closeLoan(id){ var l=loans.find(function(x){ return x.id===id; }); if(!l) return; l.status='closed'; save(); toast('Loan closed.','info'); navigate('#loan-detail/'+id); }
+function closeLoan(id){
+  var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
+  var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
+  openModal('Close Loan',
+    '<p style="color:var(--text-secondary)">Are you sure you want to close the loan for <strong>'+(b?b.name:'borrower')+'</strong>? This will mark it as completed and prevent further payments.</p>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="confirmCloseLoan(\''+id+'\')">Close Loan</button>'
+  );
+}
+function confirmCloseLoan(id){
+  var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
+  l.status='closed';
+  save(); closeModal();
+  toast('Loan closed.','info');
+  navigate('#loan-detail/'+id);
+}
 function delPayment(pid,lid){ payments=payments.filter(function(x){ return x.id!==pid; }); save(); toast('Payment removed.','info'); navigate('#loan-detail/'+lid); }
 function downloadReceipt(pid){ generateImageReceipt(pid); }
 
