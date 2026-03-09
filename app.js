@@ -140,6 +140,9 @@ function navigate(hash){
   document.getElementById('notifDot').classList.toggle('visible',hasOverdue);
   if(routes[base]){ area.innerHTML=''; routes[base](page,area); }
   else { area.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">Page not found</div></div>'; }
+  
+  // Close mobile sidebar on navigate
+  document.getElementById('sidebar').classList.remove('mobile-open');
 }
 
 function initEmailJS() {
@@ -156,6 +159,9 @@ document.getElementById('sidebarToggle').addEventListener('click',function(){
 });
 document.getElementById('mobileMenuBtn').addEventListener('click',function(){
   document.getElementById('sidebar').classList.toggle('mobile-open');
+});
+document.getElementById('sidebarOverlay').addEventListener('click', function() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
 });
 
 (function(){
@@ -180,7 +186,7 @@ register('dashboard',function(_,area){
       '<div class="kpi-card emerald"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="kpi-info"><span class="kpi-label">Collected</span><span class="kpi-value">'+fmt(totColl)+'</span><span class="kpi-sub">'+payments.length+' payments recorded</span></div></div>'+
       '<div class="kpi-card indigo"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="kpi-info"><span class="kpi-label">Borrowers</span><span class="kpi-value">'+borrowers.length+'</span><span class="kpi-sub">'+actCnt+' active loans</span></div></div>'+
     '</div>'+
-    '<div style="display:grid;grid-template-columns:1fr 340px;gap:20px;">'+
+    '<div class="grid-split sidebar-right">'+
       '<div class="table-container"><div class="table-header"><span class="table-title">Recent Loans</span><button class="btn btn-secondary btn-sm" onclick="location.hash=\'#loans\'">View All</button></div>'+
       '<table><thead><tr><th>Borrower</th><th>Amount</th><th>Term</th><th>Status</th></tr></thead><tbody id="dashTbody"></tbody></table></div>'+
       '<div class="card" style="padding:0;overflow:hidden"><div class="table-header"><span class="table-title">Recent Activity</span></div><div id="dashAct" style="padding:0 20px"></div></div>'+
@@ -189,7 +195,7 @@ register('dashboard',function(_,area){
   var tb=document.getElementById('dashTbody');
   var rec=[].concat(loans).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); }).slice(0,6);
   if(!rec.length){ tb.innerHTML='<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No loans yet</div></div></td></tr>'; }
-  else { rec.forEach(function(l){ var b=borrowers.find(function(x){ return x.id===l.borrowerId; }); tb.innerHTML+='<tr onclick="location.hash=\'#loan-detail/'+l.id+'\'" style="cursor:pointer"><td class="td-primary">'+(b?b.name:'—')+'</td><td class="td-amount">'+fmt(l.principal)+'</td><td>'+l.term+' mo.</td><td>'+badgeHTML(loanStatus(l))+'</td></tr>'; }); }
+  else { rec.forEach(function(l){ var b=borrowers.find(function(x){ return x.id===l.borrowerId; }); tb.innerHTML+='<tr onclick="location.hash=\'#loan-detail/'+l.id+'\'" style="cursor:pointer"><td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td><td class="td-amount" data-label="Amount">'+fmt(l.principal)+'</td><td data-label="Term">'+l.term+' mo.</td><td data-label="Status">'+badgeHTML(loanStatus(l))+'</td></tr>'; }); }
 
   var ac=document.getElementById('dashAct');
   var rAct=activity.slice(0,8);
@@ -218,8 +224,8 @@ function renderBorrowers(){
     var bl=loans.filter(function(l){ return l.borrowerId===b.id; });
     var al=bl.filter(function(l){ var s=loanStatus(l); return s==='active'||s==='overdue'; }).length;
     var tl=bl.reduce(function(s,l){ return s+l.principal; },0);
-    tb.innerHTML+='<tr><td class="td-primary">'+b.name+'</td><td>'+(b.phone||'—')+'</td><td>'+(b.email||'—')+'</td><td>'+al+'</td><td class="td-amount">'+fmt(tl)+'</td>'+
-      '<td><div class="td-actions"><button class="icon-btn icon-btn-edit" onclick="editBorrower(\''+b.id+'\')">✎</button><button class="icon-btn icon-btn-delete" onclick="deleteBorrower(\''+b.id+'\')">✕</button></div></td></tr>';
+    tb.innerHTML+='<tr><td class="td-primary" data-label="Name">'+b.name+'</td><td data-label="Phone">'+(b.phone||'—')+'</td><td data-label="Email">'+(b.email||'—')+'</td><td data-label="Active Loans">'+al+'</td><td class="td-amount" data-label="Total Loaned">'+fmt(tl)+'</td>'+
+      '<td data-label="Actions"><div class="td-actions"><button class="icon-btn icon-btn-edit" onclick="editBorrower(\''+b.id+'\')">✎</button><button class="icon-btn icon-btn-delete" onclick="deleteBorrower(\''+b.id+'\')">✕</button></div></td></tr>';
   });
 }
 
@@ -275,7 +281,7 @@ function submitNewBorrower(){
 register('new-loan',function(_,area){
   var opts=borrowers.map(function(b){ return '<option value="'+b.id+'">'+b.name+'</option>'; }).join('');
   area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">New Loan</h1><p class="page-subtitle">Create a new loan application.</p></div></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start">'+
+    '<div class="grid-split sidebar-right">'+
     '<div class="form-card" style="max-width:100%"><div class="form-section-title">Loan Details</div><div class="form-grid">'+
     '<div class="form-group"><label>Borrower *</label><select id="nlBor" class="form-control" onchange="updatePreview()"><option value="">— Select —</option>'+opts+'</select></div>'+
     '<div class="form-group"><label>Principal (PHP) *</label><input id="nlAmt" class="form-control" type="number" min="1" placeholder="50000" oninput="updatePreview()"></div>'+
@@ -354,14 +360,14 @@ function renderLT(){
     var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
     var out=loanOutstanding(l), st=loanStatus(l);
     tb.innerHTML+='<tr>'+
-      '<td style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+l.id.slice(-6).toUpperCase()+'</td>'+
-      '<td class="td-primary">'+(b?b.name:'—')+'</td>'+
-      '<td class="td-amount">'+fmt(l.principal)+'</td>'+
-      '<td>'+fmt(l.monthlyPayment)+'</td>'+
-      '<td style="color:'+(out>0?'var(--danger)':'var(--success)')+';font-weight:700">'+fmt(out)+'</td>'+
-      '<td>'+fmtDate(l.dueDate)+'</td>'+
-      '<td>'+badgeHTML(st)+'</td>'+
-      '<td><div class="td-actions">'+
+      '<td data-label="ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+l.id.slice(-6).toUpperCase()+'</td>'+
+      '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
+      '<td class="td-amount" data-label="Principal">'+fmt(l.principal)+'</td>'+
+      '<td data-label="Monthly">'+fmt(l.monthlyPayment)+'</td>'+
+      '<td data-label="Outstanding" style="color:'+(out>0?'var(--danger)':'var(--success)')+';font-weight:700">'+fmt(out)+'</td>'+
+      '<td data-label="Due Date">'+fmtDate(l.dueDate)+'</td>'+
+      '<td data-label="Status">'+badgeHTML(st)+'</td>'+
+      '<td data-label="Actions"><div class="td-actions">'+
         '<button class="icon-btn icon-btn-view" title="View" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
         '<button class="icon-btn icon-btn-pay" title="Pay" onclick="openPayModal(\''+l.id+'\')">$</button>'+
         '<button class="icon-btn icon-btn-delete" title="Delete" onclick="delLoan(\''+l.id+'\')">✕</button>'+
@@ -389,9 +395,9 @@ register('loan-detail',function(page,area){
   var out=loanOutstanding(loan), paid=loanPaid(loan), pct=Math.min(100,(paid/loan.totalAmount)*100), st=loanStatus(loan);
   var lPay=payments.filter(function(p){ return p.loanId===id; }).sort(function(a,b){ return b.date.localeCompare(a.date); });
 
-  var srows=''; (loan.schedule||[]).forEach(function(r){ srows+='<tr><td>'+r.period+'</td><td>'+fmt(r.payment)+'</td><td>'+fmt(r.principal)+'</td><td>'+fmt(r.interest)+'</td><td style="color:var(--primary)">'+fmt(r.balance)+'</td></tr>'; });
+  var srows=''; (loan.schedule||[]).forEach(function(r){ srows+='<tr><td data-label="#">'+r.period+'</td><td data-label="Payment">'+fmt(r.payment)+'</td><td data-label="Principal">'+fmt(r.principal)+'</td><td data-label="Interest">'+fmt(r.interest)+'</td><td data-label="Balance" style="color:var(--primary)">'+fmt(r.balance)+'</td></tr>'; });
   var prows=''; if(!lPay.length){ prows='<tr><td colspan="4"><div class="empty-state" style="padding:30px"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
-  else { lPay.forEach(function(p){ prows+='<tr><td>'+fmtDate(p.date)+'</td><td class="td-amount">'+fmt(p.amount)+'</td><td style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></div></td></tr>'; }); }
+  else { lPay.forEach(function(p){ prows+='<tr><td data-label="Date">'+fmtDate(p.date)+'</td><td class="td-amount" data-label="Amount">'+fmt(p.amount)+'</td><td data-label="Note" style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td data-label="Actions"><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></div></td></tr>'; }); }
 
   area.innerHTML='<div class="page">'+
     '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Loan Detail</h1><p class="page-subtitle">'+(b?b.name:'?')+' · #'+loan.id.slice(-6).toUpperCase()+'</p></div>'+
@@ -446,10 +452,10 @@ register('payments',function(_,area){
   var rp=[].concat(payments).sort(function(a,b){ return b.date.localeCompare(a.date); }).slice(0,15);
   var rrows='';
   if(!rp.length){ rrows='<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
-  else { rp.forEach(function(p){ var l=loans.find(function(x){ return x.id===p.loanId; }); var b=l?borrowers.find(function(x){ return x.id===l.borrowerId; }):null; rrows+='<tr><td>'+fmtDate(p.date)+'</td><td class="td-primary">'+(b?b.name:'—')+'</td><td style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+(l?l.id.slice(-6).toUpperCase():'—')+'</td><td class="td-amount">'+fmt(p.amount)+'</td><td style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button></td></tr>'; }); }
+  else { rp.forEach(function(p){ var l=loans.find(function(x){ return x.id===p.loanId; }); var b=l?borrowers.find(function(x){ return x.id===l.borrowerId; }):null; rrows+='<tr><td data-label="Date">'+fmtDate(p.date)+'</td><td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td><td data-label="Loan ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+(l?l.id.slice(-6).toUpperCase():'—')+'</td><td class="td-amount" data-label="Amount">'+fmt(p.amount)+'</td><td data-label="Note" style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td data-label="Action"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button></td></tr>'; }); }
 
   area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">Record Payment</h1><p class="page-subtitle">Log a repayment against an active loan.</p></div></div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">'+
+    '<div class="grid-split equal">'+
     '<div class="form-card" style="max-width:100%"><div class="form-section-title">Payment Details</div><div class="form-grid col-1">'+
     '<div class="form-group"><label>Loan *</label><select id="pyLoan" class="form-control" onchange="refPayInfo()"><option value="">— Select Loan —</option>'+opts+'</select></div>'+
     '<div class="form-group"><label>Amount (PHP) *</label><input id="pyAmt" class="form-control" type="number" min="1" placeholder="5000"></div>'+

@@ -1492,20 +1492,79 @@ select.form-control {
     justify-content: flex-end;
 }
 
+/* --- Layout Utils --- */
+.grid-split {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.grid-split.equal {
+    grid-template-columns: 1fr 1fr;
+}
+
+.grid-split.sidebar-right {
+    grid-template-columns: 1fr 340px;
+}
+
+@media (max-width: 1024px) {
+
+    .grid-split,
+    .grid-split.equal,
+    .grid-split.sidebar-right {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* --- Responsive --- */
+@media (max-width: 1024px) {
+
+    .dashboard-grid,
+    .loan-detail-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (max-width: 768px) {
     :root {
-        --sidebar-width: 248px;
+        --sidebar-width: 260px;
     }
 
     .sidebar {
         transform: translateX(-100%);
         position: fixed;
-        z-index: 300;
+        z-index: 1000;
+        box-shadow: var(--shadow-lg);
     }
 
     .sidebar.mobile-open {
         transform: translateX(0);
+    }
+
+    .sidebar-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(2px);
+        z-index: 999;
+        display: none;
+        animation: fadeIn 0.3s ease;
+    }
+
+    .sidebar.mobile-open+.sidebar-overlay,
+    .sidebar.mobile-open~.sidebar-overlay {
+        display: block;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
     }
 
     .main-wrapper {
@@ -1526,6 +1585,7 @@ select.form-control {
 
     .kpi-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
     }
 
     .form-card {
@@ -1535,10 +1595,72 @@ select.form-control {
     .table-header {
         flex-direction: column;
         align-items: stretch;
+        gap: 12px;
+    }
+
+    .search-box {
+        width: 100%;
     }
 
     .search-box input {
         width: 100%;
+    }
+
+    /* Table Mobile Card View */
+    table,
+    thead,
+    tbody,
+    th,
+    td,
+    tr {
+        display: block;
+    }
+
+    thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+    }
+
+    tr {
+        margin-bottom: 16px;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        padding: 8px;
+    }
+
+    tbody td {
+        border: none;
+        position: relative;
+        padding-left: 45% !important;
+        text-align: right !important;
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 10px 12px !important;
+    }
+
+    tbody td::before {
+        content: attr(data-label);
+        position: absolute;
+        left: 12px;
+        width: 40%;
+        text-align: left;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--text-muted);
+    }
+
+    .td-actions {
+        justify-content: flex-end;
+    }
+
+    .modal {
+        width: 95%;
+        margin: 10px;
     }
 }
 
@@ -1549,6 +1671,24 @@ select.form-control {
 
     .page-header {
         flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .page-actions {
+        width: 100%;
+    }
+
+    .page-actions .btn {
+        flex: 1;
+        justify-content: center;
+    }
+
+    .topbar-date {
+        display: none;
+    }
+
+    .stat-mini-value {
+        font-size: 18px;
     }
 }
 
