@@ -10,12 +10,27 @@ var loans     = DB.get('lp_loans');
 var borrowers = DB.get('lp_borrowers');
 var payments  = DB.get('lp_payments');
 var activity  = DB.get('lp_activity');
+var storedSettings = localStorage.getItem('lp_settings');
+var settings = { emailjs_service: 'default_service', emailjs_template: 'template_53kpkj7', emailjs_public_key: 'QsV4vGpnW4fLkBGMU', auto_send: true };
+
+if (storedSettings) {
+  try {
+    var parsed = JSON.parse(storedSettings);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+       Object.assign(settings, parsed);
+       // EXCEPTION: Always ensure the IDs are the latest working ones to override cached errors
+       settings.emailjs_service = 'default_service';
+       settings.emailjs_template = 'template_53kpkj7';
+    }
+  } catch(e) {}
+}
 
 function save(){
   DB.set('lp_loans',loans);
   DB.set('lp_borrowers',borrowers);
   DB.set('lp_payments',payments);
   DB.set('lp_activity',activity);
+  DB.set('lp_settings',settings);
 }
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
@@ -117,7 +132,7 @@ function navigate(hash){
   document.querySelectorAll('.nav-item').forEach(function(el){
     el.classList.toggle('active',el.dataset.page===base);
   });
-  var labels={dashboard:'Dashboard',loans:'Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail'};
+  var labels={dashboard:'Dashboard',loans:'Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings'};
   document.getElementById('breadcrumbText').textContent=labels[base]||base;
   document.getElementById('badge-loans').textContent=loans.length;
   document.getElementById('badge-borrowers').textContent=borrowers.length;
@@ -126,6 +141,13 @@ function navigate(hash){
   if(routes[base]){ area.innerHTML=''; routes[base](page,area); }
   else { area.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">Page not found</div></div>'; }
 }
+
+function initEmailJS() {
+  if (window.emailjs && settings.emailjs_public_key) {
+    emailjs.init(settings.emailjs_public_key);
+  }
+}
+window.addEventListener('load', initEmailJS);
 
 window.addEventListener('hashchange',function(){ navigate(location.hash); });
 
@@ -298,7 +320,12 @@ function submitNewLoan(){
   var b=borrowers.find(function(x){ return x.id===bid; });
   logActivity('loan','Loan of '+fmt(p)+' created for '+(b?b.name:'borrower'));
   save(); toast('Loan created!'); 
-  setTimeout(function(){ generatePDF(loan.id); }, 500);
+  setTimeout(function(){ 
+    generatePDF(loan.id); 
+    if(settings.auto_send && b && b.email) {
+      sendLoanEmail(loan.id);
+    }
+  }, 500);
   location.hash='#loan-detail/'+loan.id;
 }
 
@@ -370,6 +397,7 @@ register('loan-detail',function(page,area){
     '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Loan Detail</h1><p class="page-subtitle">'+(b?b.name:'?')+' · #'+loan.id.slice(-6).toUpperCase()+'</p></div>'+
     '<div class="page-actions"><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">← Back</button>'+
     '<button class="btn btn-secondary" onclick="generatePDF(\''+loan.id+'\')">⬇️ Download PDF</button>'+
+    '<button class="btn btn-secondary" onclick="sendLoanEmail(\''+loan.id+'\')">📧 Send Email</button>'+
     (st!=='paid'&&st!=='closed'?'<button class="btn btn-primary" onclick="openPayModal(\''+loan.id+'\')">Record Payment</button>':'')+
     (st!=='closed'?'<button class="btn btn-secondary" onclick="closeLoan(\''+loan.id+'\')">Close Loan</button>':'')+
     '</div></div>'+
@@ -526,14 +554,98 @@ function drawCharts(){
   new Chart(document.getElementById('chOC'),{type:'bar',data:{labels:['Collected','Outstanding','Total Loaned'],datasets:[{data:[totC,totO,totP],backgroundColor:['rgba(16,185,129,0.75)','rgba(244,63,94,0.75)','rgba(20,184,166,0.5)'],borderRadius:6,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
 }
 
-// ── PDF Logic ──────────────────────────────────────────────────
-function generatePDF(loanId) {
-  if (!window.jspdf) { toast('PDF library loading...', 'warning'); return; }
-  var doc = new jspdf.jsPDF();
+// ── Settings ──────────────────────────────────────────────────
+register('settings', function(_, area) {
+  area.innerHTML = '<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">Settings</h1><p class="page-subtitle">Configure system notifications and integrations.</p></div></div>' +
+    '<div class="form-card"><div class="form-section-title">EmailJS Configuration</div>' +
+    '<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">To send emails directly from the browser, sign up at <a href="https://www.emailjs.com/" target="_blank" style="color:var(--primary)">EmailJS.com</a> and enter your keys below.</p>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label>Service ID</label><input class="form-control" id="stSvc" value="' + (settings.emailjs_service || '') + '" placeholder="e.g. service_xxxx"></div>' +
+    '<div class="form-group"><label>Template ID</label><input class="form-control" id="stTmp" value="' + (settings.emailjs_template || '') + '" placeholder="e.g. template_xxxx"></div>' +
+    '<div class="form-group"><label>Public Key</label><input class="form-control" id="stKey" value="' + (settings.emailjs_public_key || '') + '" placeholder="e.g. user_xxxx"></div>' +
+    '<div class="form-group"><label>Auto-send on Generation</label><div style="margin-top:8px"><label class="btn-check"><input type="checkbox" id="stAuto" ' + (settings.auto_send ? 'checked' : '') + '> Enable automatic email sending</label></div></div>' +
+    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div></div></div>';
+});
+
+function saveSettings() {
+  settings.emailjs_service = document.getElementById('stSvc').value.trim();
+  settings.emailjs_template = document.getElementById('stTmp').value.trim();
+  settings.emailjs_public_key = document.getElementById('stKey').value.trim();
+  settings.auto_send = document.getElementById('stAuto').checked;
+  save();
+  initEmailJS();
+  toast('Settings saved!');
+}
+
+function sendLoanEmail(loanId) {
+  if (!settings.emailjs_service || !settings.emailjs_template || !settings.emailjs_public_key) {
+    toast('EmailJS not configured in Settings.', 'warning');
+    return;
+  }
+  
   var loan = loans.find(function(x) { return x.id === loanId; });
   if (!loan) return;
   var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
-  if (!b) return;
+  if (!b || !b.email) {
+    toast('Borrower has no email address.', 'error');
+    return;
+  }
+
+  toast('Preparing email...', 'info');
+
+  // Generate PDF for the attachment
+  if (!window.jspdf) { toast('PDF library error.', 'error'); return; }
+  var doc = createPDFObject(loanId);
+  if (!doc) return;
+
+  // Convert PDF to base64 (with compression if possible)
+  var pdfBase64 = doc.output('datauristring', { filename: 'loan.pdf' }).split(',')[1];
+
+  var templateParams = {
+    email: b.email,
+    name: b.name,
+    title: 'Loan Agreement #' + loan.id.slice(-6).toUpperCase(),
+    loan_id: loan.id.slice(-6).toUpperCase(),
+    loan_amount: fmt(loan.principal),
+    loan_terms: loan.term + ' Months',
+    amount: fmt(loan.principal),
+    due_date: fmtDate(loan.dueDate),
+    content: pdfBase64 // This should match the attachment parameter name in EmailJS template
+  };
+
+  emailjs.send(settings.emailjs_service, settings.emailjs_template, templateParams)
+    .then(function() {
+      toast('Email sent to ' + b.email, 'success');
+      logActivity('email', 'Loan notification sent to ' + b.name);
+    }, function(error) {
+      console.error('EmailJS Error:', error);
+      toast('Failed to send email.', 'error');
+    });
+}
+
+// ── PDF Logic ──────────────────────────────────────────────────
+function generatePDF(loanId) {
+  var doc = createPDFObject(loanId);
+  if (!doc) return;
+
+  var loan = loans.find(function(x) { return x.id === loanId; });
+  var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
+  var fileName = 'LoanPro_' + b.name.replace(/ /g, '_') + '_' + loan.id.slice(-6).toUpperCase() + '.pdf';
+  
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    window.open(doc.output('bloburl'), '_blank');
+  } else {
+    doc.save(fileName);
+  }
+}
+
+function createPDFObject(loanId) {
+  if (!window.jspdf) { toast('PDF library loading...', 'warning'); return null; }
+  var doc = new jspdf.jsPDF({ compress: true });
+  var loan = loans.find(function(x) { return x.id === loanId; });
+  if (!loan) return null;
+  var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
+  if (!b) return null;
 
   var out = loanOutstanding(loan);
   var paid = loanPaid(loan);
@@ -649,12 +761,8 @@ function generatePDF(loanId) {
   doc.text('Authorized Borrower Signature', 14, finalY + 5);
   doc.line(130, finalY, 196, finalY);
   doc.text('Lender / Administrator Signature', 130, finalY + 5);
-  var fileName = 'LoanPro_' + b.name.replace(/ /g, '_') + '_' + loan.id.slice(-6).toUpperCase() + '.pdf';
-  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    window.open(doc.output('bloburl'), '_blank');
-  } else {
-    doc.save(fileName);
-  }
+  
+  return doc;
 }
 
 function generateImageReceipt(payId) {
