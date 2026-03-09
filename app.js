@@ -621,15 +621,22 @@ function sendLoanEmail(loanId) {
   var pdfBase64 = doc.output('datauristring', { filename: 'loan.pdf' }).split(',')[1];
 
   var templateParams = {
-    email: b.email,
+    date: fmtDate(today()),
+    reference_no: loan.id.slice(-6).toUpperCase(),
     name: b.name,
-    title: 'Loan Agreement #' + loan.id.slice(-6).toUpperCase(),
-    loan_id: loan.id.slice(-6).toUpperCase(),
+    phone: b.phone || '—',
+    email: b.email,
+    address: b.address || '—',
     loan_amount: fmt(loan.principal),
-    loan_terms: loan.term + ' Months',
-    amount: fmt(loan.principal),
+    interest_rate: loan.rate + '% (' + loan.type + ')',
+    loan_term: loan.term + ' Months',
+    monthly_payment: fmt(loan.monthlyPayment),
+    total_payment: fmt(loan.totalAmount),
+    start_date: fmtDate(loan.startDate),
     due_date: fmtDate(loan.dueDate),
-    content: pdfBase64 // This should match the attachment parameter name in EmailJS template
+    purpose: loan.purpose || '—',
+    title: 'Loan Agreement #' + loan.id.slice(-6).toUpperCase(),
+    content: pdfBase64 
   };
 
   emailjs.send(settings.emailjs_service, settings.emailjs_template, templateParams)
