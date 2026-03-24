@@ -907,7 +907,7 @@ function createPDFObject(loanId) {
   }
 
   // ═══════════════════════════════════════════════════════
-  // AGREEMENT & SIGNATURES — always anchored to page bottom
+  // AGREEMENT & SIGNATURES
   // ═══════════════════════════════════════════════════════
   // Calculate how much space signatures + agreement need
   var sigWidth = 55;
@@ -925,19 +925,30 @@ function createPDFObject(loanId) {
   var lastPage = doc.internal.getNumberOfPages();
   doc.setPage(lastPage);
 
-  // Calculate target Y: push to bottom of page
-  var bottomY = pageH - 10; // 10mm from bottom edge
-  var footerStartY = bottomY - footerTotalHeight;
+  var footerStartY;
 
-  // If content goes past where footer should start, start footer right after content
-  if (curY > footerStartY) {
-    // Check if there's room on this page at all
-    if (curY + footerTotalHeight > pageH - 5) {
+  if (lastPage === 1) {
+    // For single-page loans, push signatures to the absolute bottom of the page
+    // to give it a full-page formal contract look.
+    var bottomY = pageH - 10;
+    footerStartY = bottomY - footerTotalHeight;
+    // Just in case it's tight
+    if (curY > footerStartY) {
+      if (curY + footerTotalHeight > pageH - 10) {
+        doc.addPage();
+        footerStartY = 20;
+      } else {
+        footerStartY = curY + 4;
+      }
+    }
+  } else {
+    // For 24/36 month loans that spill over to multiple pages,
+    // flow naturally after the table to avoid massive blank spaces in the middle of page 2.
+    if (curY + footerTotalHeight > pageH - 15) {
       doc.addPage();
-      footerStartY = pageH - 10 - footerTotalHeight;
-      curY = 15;
+      footerStartY = 20;
     } else {
-      footerStartY = curY + 2;
+      footerStartY = curY + 10;
     }
   }
 
