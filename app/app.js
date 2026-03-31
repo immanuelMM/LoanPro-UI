@@ -1,4 +1,4 @@
-﻿/* LoanPro — app.js (Reverted to LocalStorage) */
+/* LoanPro — app.js (Reverted to LocalStorage) */
 
 // ── Data ──────────────────────────────────────────────────
 var DB = {
@@ -277,6 +277,39 @@ function submitNewBorrower(){
   toast(b.name+' registered!'); location.hash='#borrowers';
 }
 
+// ── Co-Maker Logic ─────────────────────────────────────────
+function getRequiredComakers(amount) {
+  if (amount >= 20000 && amount <= 100000) return 2;
+  if (amount >= 15000 && amount < 20000) return 1;
+  return 0;
+}
+
+function updateComakerFields() {
+  var p = parseFloat((document.getElementById('nlAmt') || {}).value) || 0;
+  var required = getRequiredComakers(p);
+  var container = document.getElementById('comakerSection');
+  if (!container) return;
+
+  if (required === 0) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
+  container.style.display = 'block';
+  var html = '<div class="form-section-title" style="margin-top:10px">Co-Maker Information <span style="font-size:11px;color:var(--text-muted);font-weight:normal">(' + required + ' required for this amount)</span></div><div class="form-grid">';
+  for (var i = 1; i <= required; i++) {
+    html += '<div class="form-group"><label>Co-Maker ' + i + ' Full Name *</label><input id="cmName' + i + '" class="form-control" placeholder="Full name"></div>' +
+      '<div class="form-group"><label>Co-Maker ' + i + ' Phone</label><input id="cmPhone' + i + '" class="form-control" placeholder="09xx..."></div>' +
+      '<div class="form-group"><label>Co-Maker ' + i + ' Address</label><input id="cmAddr' + i + '" class="form-control" placeholder="Address"></div>' +
+      '<div class="form-group"><label>Co-Maker ' + i + ' Relationship</label><input id="cmRel' + i + '" class="form-control" placeholder="e.g. Spouse, Friend"></div>' +
+      '<div class="form-group"><label>ID Front <span style="font-size:10px">(Optional)</span></label><input type="file" id="cmIdFront' + i + '" accept="image/*" class="form-control"></div>' +
+      '<div class="form-group"><label>ID Back <span style="font-size:10px">(Optional)</span></label><input type="file" id="cmIdBack' + i + '" accept="image/*" class="form-control"></div>';
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
 // ── New Loan ───────────────────────────────────────────────
 register('new-loan',function(_,area){
   var opts=borrowers.map(function(b){ return '<option value="'+b.id+'">'+b.name+'</option>'; }).join('');
@@ -284,7 +317,7 @@ register('new-loan',function(_,area){
     '<div class="grid-split sidebar-right">'+
     '<div class="form-card" style="max-width:100%"><div class="form-section-title">Loan Details</div><div class="form-grid">'+
     '<div class="form-group"><label>Borrower *</label><select id="nlBor" class="form-control" onchange="updatePreview()"><option value="">— Select —</option>'+opts+'</select></div>'+
-    '<div class="form-group"><label>Principal (PHP) *</label><input id="nlAmt" class="form-control" type="number" min="1" placeholder="50000" oninput="updatePreview()"></div>'+
+    '<div class="form-group"><label>Principal (PHP) *</label><input id="nlAmt" class="form-control" type="number" min="1" placeholder="50000" oninput="updatePreview(); updateComakerFields()"></div>'+
     '<div class="form-group"><label>Interest Rate (%) *</label><input id="nlRate" class="form-control" type="number" min="0" step="0.1" placeholder="20" oninput="updatePreview()"></div>'+
     '<div class="form-group"><label>Term (months) *</label><input id="nlTerm" class="form-control" type="number" min="1" placeholder="12" oninput="updatePreview()"></div>'+
     '<div class="form-group"><label>Interest Type</label><select id="nlType" class="form-control" onchange="updatePreview()"><option value="simple">Simple Interest</option><option value="compound">Reducing Balance</option></select></div>'+
@@ -292,7 +325,13 @@ register('new-loan',function(_,area){
     '<div class="form-group"><label>Purpose</label><select id="nlPurp" class="form-control"><option>Business Capital</option><option>Education</option><option>Medical</option><option>Home Improvement</option><option>Personal</option><option>Other</option></select></div>'+
     '<div class="form-group"><label>Status</label><select id="nlStat" class="form-control"><option value="active">Active</option><option value="pending">Pending</option></select></div>'+
     '<div class="form-group full-width"><label>Notes</label><textarea id="nlNotes" class="form-control" rows="2" placeholder="Collateral, conditions..."></textarea></div>'+
-    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary btn-lg" onclick="submitNewLoan()">Create Loan</button><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">Cancel</button></div></div>'+
+    '</div>'+
+    '<div class="form-section-title" style="margin-top:20px">Borrower ID Attachments <span style="font-size:11px;color:var(--text-muted);font-weight:normal">(Optional)</span></div><div class="form-grid">'+
+    '<div class="form-group"><label>ID Front</label><input type="file" id="nlIdFront" class="form-control" accept="image/*"></div>'+
+    '<div class="form-group"><label>ID Back</label><input type="file" id="nlIdBack" class="form-control" accept="image/*"></div>'+
+    '</div>'+
+    '<div id="comakerSection" style="display:none"></div>'+
+    '<hr class="form-divider"><div class="form-actions"><button class="btn btn-primary btn-lg" onclick="submitNewLoan()">Create Loan</button><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">Cancel</button></div></div>'+
     '<div class="card" id="lnPrev" style="position:sticky;top:20px"><div class="form-section-title">Loan Preview</div><div id="prevContent" style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">Fill in the form to preview.</div></div>'+
     '</div></div>';
 });
@@ -310,28 +349,129 @@ function updatePreview(){
     '<div class="detail-row"><span class="detail-key">Monthly Payment</span><span class="detail-val">'+fmt(c.monthlyPayment)+'</span></div>'+
     '<div class="detail-row"><span class="detail-key">Term</span><span class="detail-val">'+t+' months</span></div>';
 }
+function processImagesCompressed(filesObj, callback) {
+  var results = {};
+  var keys = Object.keys(filesObj);
+  var pending = keys.length;
+  if (pending === 0) return callback(results);
+
+  keys.forEach(function(key) {
+    if (!filesObj[key]) {
+      pending--;
+      if (pending === 0) callback(results);
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var MAX_DIM = 800; // max width/height to keep local storage light
+        var origW = img.width, origH = img.height;
+        var w = origW, h = origH;
+        var isPortrait = origH > origW;
+        
+        // If portrait, scale such that the new "landscape" will fit bounding box.
+        if (isPortrait) {
+          if (origH > MAX_DIM) { w = Math.round(origW * (MAX_DIM/origH)); h = MAX_DIM; }
+        } else {
+          if (origW > MAX_DIM) { h = Math.round(origH * (MAX_DIM/origW)); w = MAX_DIM; }
+        }
+
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d');
+
+        if (isPortrait) {
+          // Output image is landscape, swap target dimensions
+          canvas.width = h; 
+          canvas.height = w;
+          ctx.translate(h / 2, w / 2);
+          ctx.rotate(90 * Math.PI / 180);
+          ctx.drawImage(img, -w / 2, -h / 2, w, h);
+        } else {
+          // Keep landscape as is
+          canvas.width = w; 
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+        }
+        
+        results[key] = canvas.toDataURL('image/jpeg', 0.6); // compress!
+        pending--;
+        if (pending === 0) callback(results);
+      };
+      img.onerror = function() { pending--; if (pending===0) callback(results); };
+      img.src = e.target.result;
+    };
+    reader.onerror = function() { pending--; if (pending===0) callback(results); };
+    reader.readAsDataURL(filesObj[key]);
+  });
+}
+
 function submitNewLoan(){
   var bid=document.getElementById('nlBor').value, p=parseFloat(document.getElementById('nlAmt').value), r=parseFloat(document.getElementById('nlRate').value), t=parseInt(document.getElementById('nlTerm').value), tp=document.getElementById('nlType').value, sd=document.getElementById('nlStart').value;
   if(!bid){ toast('Select a borrower.','error'); return; }
   if(!p||p<=0){ toast('Enter a valid amount.','error'); return; }
   if(!r&&r!==0){ toast('Enter a valid rate.','error'); return; }
   if(!t||t<1){ toast('Enter a valid term.','error'); return; }
+
+  // Validate co-makers
+  var requiredCM = getRequiredComakers(p);
+  var comakers = [];
+  for (var ci = 1; ci <= requiredCM; ci++) {
+    var cmName = (document.getElementById('cmName' + ci) || {}).value || '';
+    if (!cmName.trim()) { toast('Co-Maker ' + ci + ' name is required.', 'error'); return; }
+    comakers.push({
+      id: ci, // reference for attachments
+      name: cmName.trim(),
+      phone: ((document.getElementById('cmPhone' + ci) || {}).value || '').trim(),
+      address: ((document.getElementById('cmAddr' + ci) || {}).value || '').trim(),
+      relationship: ((document.getElementById('cmRel' + ci) || {}).value || '').trim()
+    });
+  }
+
+  var filesToProcess = {};
+  var bF = document.getElementById('nlIdFront'); if(bF && bF.files[0]) filesToProcess['borF'] = bF.files[0];
+  var bB = document.getElementById('nlIdBack'); if(bB && bB.files[0]) filesToProcess['borB'] = bB.files[0];
+  
+  for (var cj = 1; cj <= requiredCM; cj++) {
+    var f = document.getElementById('cmIdFront'+cj); if(f && f.files[0]) filesToProcess['cmF'+cj] = f.files[0];
+    var b = document.getElementById('cmIdBack'+cj); if(b && b.files[0]) filesToProcess['cmB'+cj] = b.files[0];
+  }
+
+  // Calculate schedule
   var c=calcLoan(p,r,t,tp);
   var due=new Date(sd); due.setMonth(due.getMonth()+t);
-  var loan={id:uid(),borrowerId:bid,principal:p,rate:r,term:t,type:tp,startDate:sd,dueDate:due.toISOString().split('T')[0],
-    purpose:document.getElementById('nlPurp').value,notes:document.getElementById('nlNotes').value.trim(),
-    status:document.getElementById('nlStat').value,totalInterest:c.totalInterest,monthlyPayment:c.monthlyPayment,
-    totalAmount:c.totalAmount,schedule:c.schedule,createdAt:new Date().toISOString()};
-  loans.push(loan);
-  var b=borrowers.find(function(x){ return x.id===bid; });
-  logActivity('loan','Loan of '+fmt(p)+' created for '+(b?b.name:'borrower'));
-  save(); toast('Loan created!'); 
-  setTimeout(function(){ 
-    if(settings.auto_send && b && b.email) {
-      sendLoanEmail(loan.id);
+  
+  // Show saving state (reading images can take a second)
+  var btn = document.querySelector('button[onclick="submitNewLoan()"]');
+  if(btn) { btn.disabled = true; btn.innerText = 'Creating...'; }
+
+  processImagesCompressed(filesToProcess, function(compressedImages) {
+    // Re-pack comakers with images
+    for (var k = 0; k < comakers.length; k++) {
+      var n = comakers[k].id;
+      if (compressedImages['cmF'+n]) comakers[k].idFront = compressedImages['cmF'+n];
+      if (compressedImages['cmB'+n]) comakers[k].idBack = compressedImages['cmB'+n];
     }
-  }, 500);
-  location.hash='#loan-detail/'+loan.id;
+    
+    var attachments = {};
+    if(compressedImages['borF']) attachments.idFront = compressedImages['borF'];
+    if(compressedImages['borB']) attachments.idBack = compressedImages['borB'];
+
+    var loan={id:uid(),borrowerId:bid,principal:p,rate:r,term:t,type:tp,startDate:sd,dueDate:due.toISOString().split('T')[0],
+      purpose:document.getElementById('nlPurp').value,notes:document.getElementById('nlNotes').value.trim(),
+      status:document.getElementById('nlStat').value,totalInterest:c.totalInterest,monthlyPayment:c.monthlyPayment,
+      totalAmount:c.totalAmount,schedule:c.schedule,comakers:comakers,attachments:attachments,createdAt:new Date().toISOString()};
+    
+    loans.push(loan);
+    var bw=borrowers.find(function(x){ return x.id===bid; });
+    logActivity('loan','Loan of '+fmt(p)+' created for '+(bw?bw.name:'borrower'));
+    save(); toast('Loan created!'); 
+    
+    setTimeout(function(){ 
+      if(settings.auto_send && bw && bw.email) { sendLoanEmail(loan.id); }
+    }, 500);
+    location.hash='#loan-detail/'+loan.id;
+  });
 }
 
 
@@ -398,6 +538,19 @@ register('loan-detail',function(page,area){
   var prows=''; if(!lPay.length){ prows='<tr><td colspan="4"><div class="empty-state" style="padding:30px"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
   else { lPay.forEach(function(p){ prows+='<tr><td data-label="Date">'+fmtDate(p.date)+'</td><td class="td-amount" data-label="Amount">'+fmt(p.amount)+'</td><td data-label="Note" style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td data-label="Actions"><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></div></td></tr>'; }); }
 
+  // Co-maker detail rows
+  var cmHTML = '';
+  if (loan.comakers && loan.comakers.length > 0) {
+    cmHTML = '<div class="card"><div class="form-section-title">Co-Maker(s)</div>';
+    loan.comakers.forEach(function(cm, idx) {
+      cmHTML += '<div class="detail-row"><span class="detail-key">Co-Maker ' + (idx+1) + '</span><span class="detail-val">' + cm.name + '</span></div>';
+      if (cm.phone) cmHTML += '<div class="detail-row"><span class="detail-key" style="padding-left:12px">Phone</span><span class="detail-val" style="font-size:12px">' + cm.phone + '</span></div>';
+      if (cm.address) cmHTML += '<div class="detail-row"><span class="detail-key" style="padding-left:12px">Address</span><span class="detail-val" style="font-size:12px">' + cm.address + '</span></div>';
+      if (cm.relationship) cmHTML += '<div class="detail-row"><span class="detail-key" style="padding-left:12px">Relationship</span><span class="detail-val" style="font-size:12px">' + cm.relationship + '</span></div>';
+    });
+    cmHTML += '</div>';
+  }
+
   area.innerHTML='<div class="page">'+
     '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Loan Detail</h1><p class="page-subtitle">'+(b?b.name:'?')+' · #'+loan.id.slice(-6).toUpperCase()+'</p></div>'+
     '<div class="page-actions"><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">← Back</button>'+
@@ -422,6 +575,7 @@ register('loan-detail',function(page,area){
         '<div class="detail-row"><span class="detail-key">Status</span><span class="detail-val">'+badgeHTML(st)+'</span></div>'+
         (loan.notes?'<div class="detail-row"><span class="detail-key">Notes</span><span class="detail-val" style="font-size:12px;max-width:55%;text-align:right">'+loan.notes+'</span></div>':'')+
       '</div>'+
+      cmHTML +
       '<div class="table-container"><div class="table-header"><span class="table-title">Amortization Schedule</span></div>'+
         '<div style="max-height:320px;overflow-y:auto"><table><thead><tr><th>#</th><th>Payment</th><th>Principal</th><th>Interest</th><th>Balance</th></tr></thead><tbody>'+srows+'</tbody></table></div></div>'+
     '</div>'+
@@ -583,7 +737,13 @@ register('settings', function(_, area) {
     '<div class="form-group"><label>Template ID</label><input class="form-control" id="stTmp" value="' + (settings.emailjs_template || '') + '" placeholder="e.g. template_xxxx"></div>' +
     '<div class="form-group"><label>Public Key</label><input class="form-control" id="stKey" value="' + (settings.emailjs_public_key || '') + '" placeholder="e.g. user_xxxx"></div>' +
     '<div class="form-group"><label>Auto-send on Generation</label><div style="margin-top:8px"><label class="btn-check"><input type="checkbox" id="stAuto" ' + (settings.auto_send ? 'checked' : '') + '> Enable automatic email sending</label></div></div>' +
-    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div></div></div>';
+    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div></div>' +
+    '<div class="form-card" style="margin-top:24px"><div class="form-section-title">Data Backup &amp; Restore</div>' +
+    '<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Export all your data to a JSON file and import it on any browser to restore your loans, borrowers, payments, and settings.</p>' +
+    '<div class="form-actions" style="gap:12px;flex-wrap:wrap;">' +
+    '<button class="btn btn-primary" onclick="exportData()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:middle"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export Data</button>' +
+    '<label class="btn btn-secondary" style="cursor:pointer;display:inline-flex;align-items:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import Data<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>' +
+    '</div></div></div>';
 });
 
 function saveSettings() {
@@ -594,6 +754,60 @@ function saveSettings() {
   save();
   initEmailJS();
   toast('Settings saved!');
+}
+
+function exportData() {
+  var data = {
+    version: 1,
+    exported: new Date().toISOString(),
+    lp_loans: loans,
+    lp_borrowers: borrowers,
+    lp_payments: payments,
+    lp_activity: activity,
+    lp_settings: settings
+  };
+  var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'loanpro-backup-' + new Date().toISOString().split('T')[0] + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Data exported successfully!', 'success');
+}
+
+function importData(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      if (!data.lp_loans || !data.lp_borrowers || !data.lp_payments) {
+        toast('Invalid backup file.', 'error');
+        return;
+      }
+      if (!confirm('This will overwrite all current data with the imported data. Continue?')) {
+        event.target.value = '';
+        return;
+      }
+      loans     = data.lp_loans     || [];
+      borrowers = data.lp_borrowers || [];
+      payments  = data.lp_payments  || [];
+      activity  = data.lp_activity  || [];
+      if (data.lp_settings && typeof data.lp_settings === 'object') {
+        Object.assign(settings, data.lp_settings);
+        settings.emailjs_service  = 'default_service';
+        settings.emailjs_template = 'template_53kpkj7';
+      }
+      save();
+      toast('Data imported successfully! Reloading…', 'success');
+      setTimeout(function() { location.reload(); }, 1500);
+    } catch(err) {
+      toast('Failed to read file. Make sure it is a valid JSON backup.', 'error');
+    }
+  };
+  reader.readAsText(file);
 }
 
 function sendLoanEmail(loanId) {
@@ -675,119 +889,358 @@ function createPDFObject(loanId) {
 
   var out = loanOutstanding(loan);
   var paid = loanPaid(loan);
+  var M = { left: 12, right: 12 };
+  var pageW = 210;
+  var pageH = 297; // A4 height
+  var contentW = pageW - M.left - M.right;
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(24);
+  // ═══════════════════════════════════════════════════════
+  // HEADER — Teal banner bar
+  // ═══════════════════════════════════════════════════════
+  doc.setFillColor(20, 184, 166);
+  doc.rect(0, 0, pageW, 18, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(15, 23, 42);
-  doc.text('LoanPro', 105, 20, { align: 'center' });
-  
-  doc.setFontSize(12);
+  doc.setFontSize(14);
+  doc.setTextColor(255, 255, 255);
+  doc.text('LoanPro', 105, 8, { align: 'center' });
+  doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text('Official Loan Agreement & Financial Statement', 105, 28, { align: 'center' });
+  doc.setTextColor(220, 252, 250);
+  doc.text('Official Loan Agreement & Financial Statement', 105, 14, { align: 'center' });
 
-  doc.setFontSize(9);
-  doc.setTextColor(148, 163, 184);
-  doc.text('Date Generated: ' + fmtDate(new Date().toISOString()), 14, 40);
-  doc.text('Reference No: ' + loan.id.slice(-8).toUpperCase(), 196, 40, { align: 'right' });
+  // Reference line
+  doc.setFontSize(7);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Date Generated: ' + fmtDate(new Date().toISOString()), M.left, 24);
+  doc.text('Reference No: ' + loan.id.slice(-8).toUpperCase(), pageW - M.right, 24, { align: 'right' });
+
+  // Thin divider
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.3);
+  doc.line(M.left, 26, pageW - M.right, 26);
+
+  // ═══════════════════════════════════════════════════════
+  // TABLE STYLES
+  // ═══════════════════════════════════════════════════════
+  var sectionHead = { fontSize: 8, fontStyle: 'bold', textColor: [255, 255, 255], fillColor: [51, 65, 85], cellPadding: 2.5 };
+  var bodyStyle = { fontSize: 7.5, cellPadding: 2 };
+
+  // ═══════════════════════════════════════════════════════
+  // BORROWER INFO (left) + LOAN CONTRACT (right) — side by side
+  // ═══════════════════════════════════════════════════════
+  var halfW = (contentW - 6) / 2;
 
   doc.autoTable({
-    startY: 48,
+    startY: 29,
     head: [['BORROWER INFORMATION', '']],
     body: [
       ['Full Name:', b.name],
-      ['Phone Number:', b.phone || 'N/A'],
-      ['Email Address:', b.email || 'N/A'],
-      ['Home Address:', b.address || 'N/A']
+      ['Phone:', b.phone || 'N/A'],
+      ['Email:', b.email || 'N/A'],
+      ['Address:', b.address || 'N/A']
     ],
     theme: 'plain',
-    headStyles: { fontSize: 11, fontStyle: 'bold', textColor: [30, 41, 59], fillColor: [241, 245, 249], cellPadding: 4 },
-    bodyStyles: { fontSize: 10, cellPadding: 3 },
-    columnStyles: { 0: { fontStyle: 'bold', width: 40, textColor: [71, 85, 105] }, 1: { textColor: [30, 41, 59] } },
-    margin: { left: 14, right: 14 }
+    headStyles: sectionHead,
+    bodyStyles: bodyStyle,
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 25, textColor: [71, 85, 105] }, 1: { textColor: [30, 41, 59] } },
+    margin: { left: M.left, right: pageW - M.left - halfW },
+    tableWidth: halfW
   });
+  var leftEndY = doc.lastAutoTable.finalY;
 
   doc.autoTable({
-    startY: doc.lastAutoTable.finalY + 10,
+    startY: 29,
     head: [['LOAN CONTRACT DETAILS', '']],
     body: [
-      ['Principal Loan Amount:', fmt(loan.principal)],
+      ['Principal:', fmt(loan.principal)],
       ['Interest Rate:', loan.rate + '% (' + loan.type.toUpperCase() + ')'],
       ['Loan Term:', loan.term + ' Months'],
-      ['Monthly Installment:', fmt(loan.monthlyPayment)],
-      ['Total Repayable Amount:', fmt(loan.totalAmount)],
-      ['Contract Start Date:', fmtDate(loan.startDate)],
-      ['Maturity / Due Date:', fmtDate(loan.dueDate)],
-      ['Purpose of Loan:', loan.purpose || 'General Purpose']
+      ['Monthly Payment:', fmt(loan.monthlyPayment)],
+      ['Total Repayable:', fmt(loan.totalAmount)],
+      ['Start Date:', fmtDate(loan.startDate)],
+      ['Due Date:', fmtDate(loan.dueDate)],
+      ['Purpose:', loan.purpose || 'General Purpose']
     ],
     theme: 'plain',
-    headStyles: { fontSize: 11, fontStyle: 'bold', textColor: [30, 41, 59], fillColor: [241, 245, 249], cellPadding: 4 },
-    bodyStyles: { fontSize: 10, cellPadding: 3 },
-    columnStyles: { 0: { fontStyle: 'bold', width: 50, textColor: [71, 85, 105] }, 1: { fontStyle: 'bold', textColor: [20, 184, 166] } },
-    margin: { left: 14, right: 14 }
+    headStyles: sectionHead,
+    bodyStyles: bodyStyle,
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 30, textColor: [71, 85, 105] }, 1: { fontStyle: 'bold', textColor: [20, 184, 166] } },
+    margin: { left: M.left + halfW + 6, right: M.right },
+    tableWidth: halfW
   });
+  var rightEndY = doc.lastAutoTable.finalY;
 
-  doc.autoTable({
-    startY: doc.lastAutoTable.finalY + 10,
-    head: [['CURRENT ACCOUNT STATEMENT', '']],
-    body: [
-      ['Total Amount Paid to Date:', fmt(paid)],
-      ['Outstanding Balance:', fmt(out)],
-      ['Current Account Status:', loanStatus(loan).toUpperCase()]
-    ],
-    theme: 'plain',
-    headStyles: { fontSize: 11, fontStyle: 'bold', textColor: [30, 41, 59], fillColor: [241, 245, 249], cellPadding: 4 },
-    bodyStyles: { fontSize: 10, cellPadding: 3 },
-    columnStyles: { 0: { fontStyle: 'bold', width: 55, textColor: [71, 85, 105] }, 1: { fontStyle: 'bold', textColor: [244, 63, 94] } },
-    margin: { left: 14, right: 14 }
-  });
+  var curY = Math.max(leftEndY, rightEndY) + 4;
 
-  doc.addPage();
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text('AMORTIZATION SCHEDULE', 14, 20);
+  // ═══════════════════════════════════════════════════════
+  // CO-MAKER SECTION
+  // ═══════════════════════════════════════════════════════
+  if (loan.comakers && loan.comakers.length > 0) {
+    var cmBody = [];
+    loan.comakers.forEach(function(cm, i) {
+      cmBody.push([
+        'Co-Maker ' + (i + 1),
+        cm.name + (cm.relationship ? ' (' + cm.relationship + ')' : ''),
+        cm.phone || 'N/A',
+        cm.address || 'N/A'
+      ]);
+    });
+    doc.autoTable({
+      startY: curY,
+      head: [['', 'NAME', 'PHONE', 'ADDRESS']],
+      body: cmBody,
+      theme: 'grid',
+      headStyles: sectionHead,
+      bodyStyles: bodyStyle,
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 28, textColor: [71, 85, 105] } },
+      margin: M
+    });
+    curY = doc.lastAutoTable.finalY + 4;
+  }
 
+  // ═══════════════════════════════════════════════════════
+  // ACCOUNT STATEMENT (only when payments exist)
+  // ═══════════════════════════════════════════════════════
+  var lPay = payments.filter(function(p) { return p.loanId === loanId; }).sort(function(a, b) { return a.date.localeCompare(b.date); });
+  if (lPay.length > 0) {
+    doc.autoTable({
+      startY: curY,
+      head: [['ACCOUNT STATEMENT', 'TOTAL PAID', 'OUTSTANDING BALANCE', 'CURRENT STATUS']],
+      body: [[' ', fmt(paid), fmt(out), loanStatus(loan).toUpperCase()]],
+      theme: 'grid',
+      headStyles: sectionHead,
+      bodyStyles: { fontSize: 8, cellPadding: 2.5, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 1 },
+        1: { textColor: [16, 185, 129] },
+        2: { textColor: [244, 63, 94] },
+        3: { textColor: [30, 41, 59] }
+      },
+      margin: M
+    });
+    curY = doc.lastAutoTable.finalY + 4;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // AMORTIZATION SCHEDULE
+  // ═══════════════════════════════════════════════════════
   var tableBody = (loan.schedule || []).map(function(r) {
     return [r.period, fmt(r.payment), fmt(r.principal), fmt(r.interest), fmt(r.balance)];
   });
 
   doc.autoTable({
-    startY: 25,
-    head: [['Period', 'Payment', 'Principal', 'Interest', 'Balance']],
+    startY: curY,
+    head: [['#', 'Payment', 'Principal', 'Interest', 'Balance']],
     body: tableBody,
     theme: 'striped',
-    headStyles: { fillColor: [20, 184, 166] },
-    styles: { fontSize: 9 }
+    headStyles: { fillColor: [20, 184, 166], fontSize: 7, cellPadding: 2 },
+    styles: { fontSize: 6.5, cellPadding: 1.5 },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: M
   });
+  curY = doc.lastAutoTable.finalY + 4;
 
-  var finalY = doc.lastAutoTable.finalY + 15;
-  var lPay = payments.filter(function(p){ return p.loanId===loanId; }).sort(function(a,b){ return a.date.localeCompare(b.date); });
+  // ═══════════════════════════════════════════════════════
+  // PAYMENT HISTORY (if exists)
+  // ═══════════════════════════════════════════════════════
   if (lPay.length > 0) {
-    if (finalY > 240) { doc.addPage(); finalY = 20; }
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text('RECENT PAYMENT HISTORY', 14, finalY);
+    if (curY > 250) { doc.addPage(); curY = 15; }
     var payBody = lPay.map(function(p) { return [fmtDate(p.date), fmt(p.amount), p.note || '—']; });
-    doc.autoTable({ startY: finalY + 5, head: [['DATE', 'AMOUNT PAID', 'REMARKS']], body: payBody, theme: 'grid', headStyles: { fillColor: [71, 85, 105], fontSize: 9, halign: 'left' }, styles: { fontSize: 8.5 }, margin: { left: 14, right: 14 } });
-    finalY = doc.lastAutoTable.finalY + 15;
+    doc.autoTable({
+      startY: curY,
+      head: [['DATE', 'AMOUNT PAID', 'REMARKS']],
+      body: payBody,
+      theme: 'grid',
+      headStyles: { fillColor: [71, 85, 105], fontSize: 7, halign: 'left', cellPadding: 2 },
+      styles: { fontSize: 6.5, cellPadding: 1.5 },
+      margin: M
+    });
+    curY = doc.lastAutoTable.finalY + 4;
   }
 
-  if (finalY > 230) { doc.addPage(); finalY = 20; }
-  doc.setFontSize(9);
+  // ═══════════════════════════════════════════════════════
+  // AGREEMENT & SIGNATURES
+  // ═══════════════════════════════════════════════════════
+  // Calculate how much space signatures + agreement need
+  var sigWidth = 55;
+  var sigGap = 10;
+  var sigCount = 2 + ((loan.comakers && loan.comakers.length) || 0);
+  var sigRows = sigCount <= 3 ? 1 : 2;
+  var sigBlockHeight = sigRows * 18;
+  var agreementText = "Agreement: The Borrower hereby acknowledges receipt of the full principal amount and agrees to the terms and repayment schedule outlined above. In case of default, the Lender reserves the right to take necessary legal action to recover the outstanding balance plus applicable penalties.";
+  doc.setFontSize(7);
+  var agreementLines = doc.splitTextToSize(agreementText, contentW);
+  var agreementHeight = agreementLines.length * 3.5 + 6;
+  var footerTotalHeight = agreementHeight + sigBlockHeight + 8;
+
+  // Determine the page where content ended
+  var lastPage = doc.internal.getNumberOfPages();
+  doc.setPage(lastPage);
+
+  var footerStartY;
+
+  if (lastPage === 1) {
+    // For single-page loans, push signatures to the absolute bottom of the page
+    // to give it a full-page formal contract look.
+    var bottomY = pageH - 10;
+    footerStartY = bottomY - footerTotalHeight;
+    // Just in case it's tight
+    if (curY > footerStartY) {
+      if (curY + footerTotalHeight > pageH - 10) {
+        doc.addPage();
+        footerStartY = 20;
+      } else {
+        footerStartY = curY + 4;
+      }
+    }
+  } else {
+    // For 24/36 month loans that spill over to multiple pages,
+    // flow naturally after the table to avoid massive blank spaces in the middle of page 2.
+    if (curY + footerTotalHeight > pageH - 15) {
+      doc.addPage();
+      footerStartY = 20;
+    } else {
+      footerStartY = curY + 10;
+    }
+  }
+
+  // Draw a thin separator line before footer
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.3);
+  doc.line(M.left, footerStartY - 3, pageW - M.right, footerStartY - 3);
+
+  // Agreement text
+  doc.setFontSize(7);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 116, 139);
-  var agreementText = "Agreement: The Borrower hereby acknowledges receipt of the full principal amount and agrees to the terms and repayment schedule outlined above. In case of default, the Lender reserves the right to take necessary legal action to recover the outstanding balance plus applicable penalties.";
-  var lines = doc.splitTextToSize(agreementText, 180);
-  doc.text(lines, 14, finalY);
-  finalY += lines.length * 4 + 25;
-  doc.setDrawColor(203, 213, 225);
-  doc.line(14, finalY, 80, finalY);
-  doc.text('Authorized Borrower Signature', 14, finalY + 5);
-  doc.line(130, finalY, 196, finalY);
-  doc.text('Lender / Administrator Signature', 130, finalY + 5);
-  
+  doc.text(agreementLines, M.left, footerStartY);
+  var sigY = footerStartY + agreementHeight;
+
+  // Signature lines
+  doc.setDrawColor(100, 116, 139);
+  doc.setLineWidth(0.4);
+
+  if (sigCount <= 3) {
+    var totalSigW = sigCount * sigWidth + (sigCount - 1) * sigGap;
+    var sx = (pageW - totalSigW) / 2;
+    if (sx < M.left) sx = M.left;
+
+    doc.line(sx, sigY, sx + sigWidth, sigY);
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105);
+    doc.text('Borrower Signature', sx + sigWidth / 2, sigY + 4, { align: 'center' });
+    sx += sigWidth + sigGap;
+
+    if (loan.comakers && loan.comakers.length > 0) {
+      loan.comakers.forEach(function(cm, i) {
+        doc.line(sx, sigY, sx + sigWidth, sigY);
+        doc.text('Co-Maker ' + (i + 1) + ': ' + cm.name, sx + sigWidth / 2, sigY + 4, { align: 'center' });
+        sx += sigWidth + sigGap;
+      });
+    }
+
+    doc.line(sx, sigY, sx + sigWidth, sigY);
+    doc.text('Lender / Administrator', sx + sigWidth / 2, sigY + 4, { align: 'center' });
+  } else {
+    // Row 1: Borrower + Lender
+    doc.line(M.left, sigY, M.left + sigWidth, sigY);
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105);
+    doc.text('Borrower Signature', M.left + sigWidth / 2, sigY + 4, { align: 'center' });
+    doc.line(pageW - M.right - sigWidth, sigY, pageW - M.right, sigY);
+    doc.text('Lender / Administrator', pageW - M.right - sigWidth / 2, sigY + 4, { align: 'center' });
+
+    // Row 2: Co-makers
+    sigY += 18;
+    if (loan.comakers && loan.comakers.length > 0) {
+      var cmTotalW = loan.comakers.length * sigWidth + (loan.comakers.length - 1) * sigGap;
+      var cmx = (pageW - cmTotalW) / 2;
+      if (cmx < M.left) cmx = M.left;
+      loan.comakers.forEach(function(cm, i) {
+        doc.line(cmx, sigY, cmx + sigWidth, sigY);
+        doc.text('Co-Maker ' + (i + 1) + ': ' + cm.name, cmx + sigWidth / 2, sigY + 4, { align: 'center' });
+        cmx += sigWidth + sigGap;
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // FOOTER BAR
+  // ═══════════════════════════════════════════════════════
+  var totalPages = doc.internal.getNumberOfPages();
+  for (var pi = 1; pi <= totalPages; pi++) {
+    doc.setPage(pi);
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, pageH - 6, pageW, 6, 'F');
+    doc.setFontSize(5.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text('This is a system-generated document. LoanPro Loan Management System. Page ' + pi + ' of ' + totalPages, 105, pageH - 2.5, { align: 'center' });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ATTACHMENTS APPENDIX
+  // ═══════════════════════════════════════════════════════
+  var hasAttachments = false;
+  if (loan.attachments && (loan.attachments.idFront || loan.attachments.idBack)) hasAttachments = true;
+  if (loan.comakers && loan.comakers.some(function(cm) { return cm.idFront || cm.idBack; })) hasAttachments = true;
+
+  if (hasAttachments) {
+    doc.addPage();
+    var atY = 20;
+    doc.setFillColor(13, 148, 136);
+    doc.rect(0, 0, pageW, 12, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('APPENDIX: ID ATTACHMENTS', M.left, 8);
+
+    function addImageBlock(title, front, back) {
+      if (!front && !back) return;
+      if (atY > pageH - 60) { doc.addPage(); atY = 20; }
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text(title, M.left, atY);
+      atY += 6;
+      
+      var imgW = 80;
+      var imgH = 50;
+      var startX = M.left;
+      
+      if (front) {
+        doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+        doc.text('Front ID', startX, atY);
+        try { doc.addImage(front, 'JPEG', startX, atY + 2, imgW, imgH); } catch(e){}
+      }
+      if (back) {
+        var bx = front ? startX + imgW + 10 : startX;
+        doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+        doc.text('Back ID', bx, atY);
+        try { doc.addImage(back, 'JPEG', bx, atY + 2, imgW, imgH); } catch(e){}
+      }
+      atY += imgH + 15;
+    }
+
+    addImageBlock('Borrower: ' + b.name, loan.attachments && loan.attachments.idFront, loan.attachments && loan.attachments.idBack);
+    
+    if (loan.comakers && loan.comakers.length > 0) {
+      loan.comakers.forEach(function(cm, i) {
+        addImageBlock('Co-Maker ' + (i+1) + ': ' + cm.name, cm.idFront, cm.idBack);
+      });
+    }
+
+    // Apply footer to appendix pages
+    var appendPages = doc.internal.getNumberOfPages();
+    for (var pi = totalPages + 1; pi <= appendPages; pi++) {
+      doc.setPage(pi);
+      doc.setFillColor(248, 250, 252); doc.rect(0, pageH - 6, pageW, 6, 'F');
+      doc.setFontSize(5.5); doc.setTextColor(148, 163, 184);
+      doc.text('This is a system-generated document. Appendix Page', 105, pageH - 2.5, { align: 'center' });
+    }
+  }
+
   return doc;
 }
 
@@ -802,112 +1255,107 @@ function generateImageReceipt(payId) {
   var canvas = document.createElement('canvas');
   var ctx = canvas.getContext('2d');
   
-  // High DPI scaling
-  var dpr = window.devicePixelRatio || 1;
-  canvas.width = 400 * dpr;
-  canvas.height = 600 * dpr;
+  var W = 420, H = 750;
+  var dpr = window.devicePixelRatio || 2;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
   ctx.scale(dpr, dpr);
-  canvas.style.width = '400px';
-  canvas.style.height = '600px';
 
-  // Background & Shadow effect
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, 400, 600);
-  
+  // Background
+  ctx.fillStyle = '#f0f2f5';
+  ctx.fillRect(0, 0, W, H);
+
   // Header Gradient
-  var grad = ctx.createLinearGradient(0, 0, 400, 0);
-  grad.addColorStop(0, '#14b8a6');
-  grad.addColorStop(1, '#0d9488');
+  var headerH = 220;
+  var hGrad = ctx.createLinearGradient(0, 0, W, headerH);
+  hGrad.addColorStop(0, '#007bff');
+  hGrad.addColorStop(0.5, '#0056d2');
+  hGrad.addColorStop(1, '#003ea1');
+  ctx.fillStyle = hGrad;
   
-  // Logo
-  ctx.fillStyle = grad;
-  ctx.font = 'bold 34px "Inter", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('LoanPro', 200, 70);
-  
-  ctx.fillStyle = '#64748b';
-  ctx.font = '600 12px "Inter", sans-serif';
-  ctx.fillText('OFFICIAL PAYMENT RECEIPT', 200, 95);
+  // Rounded bottom corners
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(W, 0); ctx.lineTo(W, headerH - 25);
+  ctx.quadraticCurveTo(W, headerH, W - 25, headerH); ctx.lineTo(25, headerH);
+  ctx.quadraticCurveTo(0, headerH, 0, headerH - 25); ctx.closePath(); ctx.fill();
 
-  ctx.strokeStyle = '#f1f5f9';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(40, 115); ctx.lineTo(360, 115); ctx.stroke();
+  // Pattern overlay circles
+  ctx.globalAlpha = 0.06;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(60, 40, 80, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(360, 180, 100, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1.0;
 
-  // Details
-  ctx.textAlign = 'left';
-  ctx.font = '13px "Inter", sans-serif';
-  ctx.fillStyle = '#94a3b8';
-  var y = 150;
-  
-  ctx.fillText('DATE', 40, y);
-  ctx.fillText('RECEIPT NO.', 40, y + 40);
-  ctx.fillText('LOAN REFERENCE', 40, y + 80);
+  // Checkmark circle
+  var cx = W / 2, cy = 65;
+  ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, 24, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+  ctx.strokeStyle = '#0056d2'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - 10, cy + 1); ctx.lineTo(cx - 3, cy + 9); ctx.lineTo(cx + 12, cy - 8); ctx.stroke();
 
-  ctx.textAlign = 'right';
-  ctx.fillStyle = '#1e293b';
-  ctx.font = 'bold 15px "Inter", sans-serif';
-  ctx.fillText(fmtDate(p.date), 360, y);
-  ctx.fillText(p.id.slice(-8).toUpperCase(), 360, y + 40);
-  ctx.fillText(loan.id.slice(-6).toUpperCase(), 360, y + 80);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ffffff'; ctx.font = '600 18px "Inter", "Segoe UI", sans-serif';
+  ctx.fillText('Payment Successful', cx, cy + 55);
 
-  y = 260;
-  ctx.strokeStyle = '#f1f5f9';
-  ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(360, y); ctx.stroke();
+  ctx.font = 'bold 42px "Inter", "Segoe UI", sans-serif';
+  ctx.fillText(fmt(p.amount), cx, cy + 105);
 
-  y += 40;
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '13px "Inter", sans-serif';
-  ctx.fillText('BORROWER', 40, y);
-  ctx.textAlign = 'right';
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 17px "Inter", sans-serif';
-  ctx.fillText(b.name, 360, y);
+  ctx.font = '300 13px "Inter", "Segoe UI", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  var dateStr = new Date(p.date).toLocaleDateString('en-PH', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
+  ctx.fillText(dateStr, cx, cy + 128);
 
-  y += 40;
-  ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(360, y); ctx.stroke();
+  // WHITE CARD
+  var cardX = 20, cardY = headerH + 15, cardW = W - 40, cardH = H - cardY - 70, radius = 16;
+  ctx.shadowColor = 'rgba(0,0,0,0.08)'; ctx.shadowBlur = 15; ctx.shadowOffsetY = 4;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(cardX + radius, cardY); ctx.lineTo(cardX + cardW - radius, cardY);
+  ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + radius); ctx.lineTo(cardX + cardW, cardY + cardH - radius);
+  ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - radius, cardY + cardH); ctx.lineTo(cardX + radius, cardY + cardH);
+  ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - radius); ctx.lineTo(cardX, cardY + radius);
+  ctx.quadraticCurveTo(cardX, cardY, cardX + radius, cardY); ctx.closePath(); ctx.fill();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
 
-  // Amount Section
-  y += 60;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#64748b';
-  ctx.font = '600 12px "Inter", sans-serif';
-  ctx.fillText('TOTAL AMOUNT PAID', 200, y);
-  
-  y += 45;
-  ctx.fillStyle = '#14b8a6';
-  ctx.font = 'bold 38px "Inter", sans-serif';
-  ctx.fillText(fmt(p.amount), 200, y);
+  var dx = cardX + 24, dy = cardY + 30;
+  ctx.textAlign = 'left'; ctx.fillStyle = '#0056d2'; ctx.font = '700 11px "Inter", "Segoe UI", sans-serif';
+  ctx.fillText('TRANSACTION DETAILS', dx, dy);
 
-  // Remarks
-  y += 45;
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = 'italic 13px "Inter", sans-serif';
-  var note = p.note || 'Regular Loan Repayment';
-  ctx.fillText('"' + note + '"', 200, y);
+  dy += 12; ctx.strokeStyle = '#e8ecf1'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(cardX + cardW - 24, dy); ctx.stroke();
 
-  // Footer / Balance
-  y = 500;
-  ctx.fillStyle = '#f8fafc';
-  ctx.fillRect(40, y, 320, 45);
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.strokeRect(40, y, 320, 45);
-  
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#64748b';
-  ctx.font = '600 12px "Inter", sans-serif';
-  ctx.fillText('REMAINING BALANCE', 55, y + 27);
-  
-  ctx.textAlign = 'right';
-  ctx.fillStyle = '#f43f5e';
-  ctx.font = 'bold 16px "Inter", sans-serif';
-  ctx.fillText(fmt(loanOutstanding(loan)), 345, y + 27);
+  var rh = 36; dy += 8; var rightX = cardX + cardW - 24;
+  function drawRow(label, value, isHighlight, isBold) {
+    dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText(label, dx, dy);
+    ctx.textAlign = 'right'; ctx.fillStyle = isHighlight ? '#0056d2' : '#1f2937'; ctx.font = (isBold ? 'bold ' : '500 ') + '13px "Inter", "Segoe UI", sans-serif'; ctx.fillText(value, rightX, dy);
+  }
 
-  y = 575;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '10px "Inter", sans-serif';
-  ctx.fillText('Thank you! This is a system-generated receipt.', 200, y);
+  drawRow('Recipient', b.name, false, true);
+  drawRow('Transaction Type', 'Loan Repayment', false, false);
+  drawRow('Reference No.', p.id.slice(-8).toUpperCase(), true, true);
+  drawRow('Loan Reference', loan.id.slice(-6).toUpperCase(), false, false);
+
+  dy += 18; ctx.setLineDash([3, 3]); ctx.strokeStyle = '#d1d5db';
+  ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke(); ctx.setLineDash([]);
+
+  drawRow('Amount Paid', fmt(p.amount), false, true);
+  drawRow('Payment Date', fmtDate(p.date), false, false);
+  if (p.note) drawRow('Remarks', p.note, false, false);
+
+  dy += 18; ctx.setLineDash([3, 3]); ctx.strokeStyle = '#d1d5db';
+  ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke(); ctx.setLineDash([]);
+
+  dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Remaining Balance', dx, dy);
+  ctx.textAlign = 'right'; var outstanding = loanOutstanding(loan);
+  ctx.fillStyle = outstanding > 0 ? '#ef4444' : '#16a34a'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(fmt(outstanding), rightX, dy);
+
+  dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Loan Status', dx, dy);
+  ctx.textAlign = 'right'; var st = loanStatus(loan); var stColors = { active: '#0056d2', paid: '#16a34a', overdue: '#ef4444', closed: '#6b7280', pending: '#f59e0b' };
+  ctx.fillStyle = stColors[st] || '#1f2937'; ctx.font = 'bold 13px "Inter", "Segoe UI", sans-serif'; ctx.fillText(st.toUpperCase(), rightX, dy);
+
+  // FOOTER
+  ctx.textAlign = 'center'; ctx.fillStyle = '#9ca3af'; ctx.font = '400 10px "Inter", "Segoe UI", sans-serif';
+  ctx.fillText('Powered by LoanPro \u00b7 Loan Management System', W / 2, H - 38);
+  ctx.font = '400 9px "Inter", "Segoe UI", sans-serif'; ctx.fillStyle = '#b0b8c4';
+  ctx.fillText('This is a system-generated receipt. No signature required.', W / 2, H - 22);
 
   // Download Action
   var link = document.createElement('a');
