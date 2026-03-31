@@ -302,7 +302,9 @@ function updateComakerFields() {
     html += '<div class="form-group"><label>Co-Maker ' + i + ' Full Name *</label><input id="cmName' + i + '" class="form-control" placeholder="Full name"></div>' +
       '<div class="form-group"><label>Co-Maker ' + i + ' Phone</label><input id="cmPhone' + i + '" class="form-control" placeholder="09xx..."></div>' +
       '<div class="form-group"><label>Co-Maker ' + i + ' Address</label><input id="cmAddr' + i + '" class="form-control" placeholder="Address"></div>' +
-      '<div class="form-group"><label>Co-Maker ' + i + ' Relationship</label><input id="cmRel' + i + '" class="form-control" placeholder="e.g. Spouse, Friend"></div>';
+      '<div class="form-group"><label>Co-Maker ' + i + ' Relationship</label><input id="cmRel' + i + '" class="form-control" placeholder="e.g. Spouse, Friend"></div>' +
+      '<div class="form-group"><label>ID Front <span style="font-size:10px">(Optional)</span></label><input type="file" id="cmIdFront' + i + '" accept="image/*" class="form-control"></div>' +
+      '<div class="form-group"><label>ID Back <span style="font-size:10px">(Optional)</span></label><input type="file" id="cmIdBack' + i + '" accept="image/*" class="form-control"></div>';
   }
   html += '</div>';
   container.innerHTML = html;
@@ -324,6 +326,10 @@ register('new-loan',function(_,area){
     '<div class="form-group"><label>Status</label><select id="nlStat" class="form-control"><option value="active">Active</option><option value="pending">Pending</option></select></div>'+
     '<div class="form-group full-width"><label>Notes</label><textarea id="nlNotes" class="form-control" rows="2" placeholder="Collateral, conditions..."></textarea></div>'+
     '</div>'+
+    '<div class="form-section-title" style="margin-top:20px">Borrower ID Attachments <span style="font-size:11px;color:var(--text-muted);font-weight:normal">(Optional)</span></div><div class="form-grid">'+
+    '<div class="form-group"><label>ID Front</label><input type="file" id="nlIdFront" class="form-control" accept="image/*"></div>'+
+    '<div class="form-group"><label>ID Back</label><input type="file" id="nlIdBack" class="form-control" accept="image/*"></div>'+
+    '</div>'+
     '<div id="comakerSection" style="display:none"></div>'+
     '<hr class="form-divider"><div class="form-actions"><button class="btn btn-primary btn-lg" onclick="submitNewLoan()">Create Loan</button><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">Cancel</button></div></div>'+
     '<div class="card" id="lnPrev" style="position:sticky;top:20px"><div class="form-section-title">Loan Preview</div><div id="prevContent" style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0">Fill in the form to preview.</div></div>'+
@@ -343,6 +349,63 @@ function updatePreview(){
     '<div class="detail-row"><span class="detail-key">Monthly Payment</span><span class="detail-val">'+fmt(c.monthlyPayment)+'</span></div>'+
     '<div class="detail-row"><span class="detail-key">Term</span><span class="detail-val">'+t+' months</span></div>';
 }
+function processImagesCompressed(filesObj, callback) {
+  var results = {};
+  var keys = Object.keys(filesObj);
+  var pending = keys.length;
+  if (pending === 0) return callback(results);
+
+  keys.forEach(function(key) {
+    if (!filesObj[key]) {
+      pending--;
+      if (pending === 0) callback(results);
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var MAX_DIM = 800; // max width/height to keep local storage light
+        var origW = img.width, origH = img.height;
+        var w = origW, h = origH;
+        var isPortrait = origH > origW;
+        
+        // If portrait, scale such that the new "landscape" will fit bounding box.
+        if (isPortrait) {
+          if (origH > MAX_DIM) { w = Math.round(origW * (MAX_DIM/origH)); h = MAX_DIM; }
+        } else {
+          if (origW > MAX_DIM) { h = Math.round(origH * (MAX_DIM/origW)); w = MAX_DIM; }
+        }
+
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d');
+
+        if (isPortrait) {
+          // Output image is landscape, swap target dimensions
+          canvas.width = h; 
+          canvas.height = w;
+          ctx.translate(h / 2, w / 2);
+          ctx.rotate(90 * Math.PI / 180);
+          ctx.drawImage(img, -w / 2, -h / 2, w, h);
+        } else {
+          // Keep landscape as is
+          canvas.width = w; 
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+        }
+        
+        results[key] = canvas.toDataURL('image/jpeg', 0.6); // compress!
+        pending--;
+        if (pending === 0) callback(results);
+      };
+      img.onerror = function() { pending--; if (pending===0) callback(results); };
+      img.src = e.target.result;
+    };
+    reader.onerror = function() { pending--; if (pending===0) callback(results); };
+    reader.readAsDataURL(filesObj[key]);
+  });
+}
+
 function submitNewLoan(){
   var bid=document.getElementById('nlBor').value, p=parseFloat(document.getElementById('nlAmt').value), r=parseFloat(document.getElementById('nlRate').value), t=parseInt(document.getElementById('nlTerm').value), tp=document.getElementById('nlType').value, sd=document.getElementById('nlStart').value;
   if(!bid){ toast('Select a borrower.','error'); return; }
@@ -357,6 +420,7 @@ function submitNewLoan(){
     var cmName = (document.getElementById('cmName' + ci) || {}).value || '';
     if (!cmName.trim()) { toast('Co-Maker ' + ci + ' name is required.', 'error'); return; }
     comakers.push({
+      id: ci, // reference for attachments
       name: cmName.trim(),
       phone: ((document.getElementById('cmPhone' + ci) || {}).value || '').trim(),
       address: ((document.getElementById('cmAddr' + ci) || {}).value || '').trim(),
@@ -364,22 +428,50 @@ function submitNewLoan(){
     });
   }
 
+  var filesToProcess = {};
+  var bF = document.getElementById('nlIdFront'); if(bF && bF.files[0]) filesToProcess['borF'] = bF.files[0];
+  var bB = document.getElementById('nlIdBack'); if(bB && bB.files[0]) filesToProcess['borB'] = bB.files[0];
+  
+  for (var cj = 1; cj <= requiredCM; cj++) {
+    var f = document.getElementById('cmIdFront'+cj); if(f && f.files[0]) filesToProcess['cmF'+cj] = f.files[0];
+    var b = document.getElementById('cmIdBack'+cj); if(b && b.files[0]) filesToProcess['cmB'+cj] = b.files[0];
+  }
+
+  // Calculate schedule
   var c=calcLoan(p,r,t,tp);
   var due=new Date(sd); due.setMonth(due.getMonth()+t);
-  var loan={id:uid(),borrowerId:bid,principal:p,rate:r,term:t,type:tp,startDate:sd,dueDate:due.toISOString().split('T')[0],
-    purpose:document.getElementById('nlPurp').value,notes:document.getElementById('nlNotes').value.trim(),
-    status:document.getElementById('nlStat').value,totalInterest:c.totalInterest,monthlyPayment:c.monthlyPayment,
-    totalAmount:c.totalAmount,schedule:c.schedule,comakers:comakers,createdAt:new Date().toISOString()};
-  loans.push(loan);
-  var b=borrowers.find(function(x){ return x.id===bid; });
-  logActivity('loan','Loan of '+fmt(p)+' created for '+(b?b.name:'borrower'));
-  save(); toast('Loan created!'); 
-  setTimeout(function(){ 
-    if(settings.auto_send && b && b.email) {
-      sendLoanEmail(loan.id);
+  
+  // Show saving state (reading images can take a second)
+  var btn = document.querySelector('button[onclick="submitNewLoan()"]');
+  if(btn) { btn.disabled = true; btn.innerText = 'Creating...'; }
+
+  processImagesCompressed(filesToProcess, function(compressedImages) {
+    // Re-pack comakers with images
+    for (var k = 0; k < comakers.length; k++) {
+      var n = comakers[k].id;
+      if (compressedImages['cmF'+n]) comakers[k].idFront = compressedImages['cmF'+n];
+      if (compressedImages['cmB'+n]) comakers[k].idBack = compressedImages['cmB'+n];
     }
-  }, 500);
-  location.hash='#loan-detail/'+loan.id;
+    
+    var attachments = {};
+    if(compressedImages['borF']) attachments.idFront = compressedImages['borF'];
+    if(compressedImages['borB']) attachments.idBack = compressedImages['borB'];
+
+    var loan={id:uid(),borrowerId:bid,principal:p,rate:r,term:t,type:tp,startDate:sd,dueDate:due.toISOString().split('T')[0],
+      purpose:document.getElementById('nlPurp').value,notes:document.getElementById('nlNotes').value.trim(),
+      status:document.getElementById('nlStat').value,totalInterest:c.totalInterest,monthlyPayment:c.monthlyPayment,
+      totalAmount:c.totalAmount,schedule:c.schedule,comakers:comakers,attachments:attachments,createdAt:new Date().toISOString()};
+    
+    loans.push(loan);
+    var bw=borrowers.find(function(x){ return x.id===bid; });
+    logActivity('loan','Loan of '+fmt(p)+' created for '+(bw?bw.name:'borrower'));
+    save(); toast('Loan created!'); 
+    
+    setTimeout(function(){ 
+      if(settings.auto_send && bw && bw.email) { sendLoanEmail(loan.id); }
+    }, 500);
+    location.hash='#loan-detail/'+loan.id;
+  });
 }
 
 
@@ -645,7 +737,13 @@ register('settings', function(_, area) {
     '<div class="form-group"><label>Template ID</label><input class="form-control" id="stTmp" value="' + (settings.emailjs_template || '') + '" placeholder="e.g. template_xxxx"></div>' +
     '<div class="form-group"><label>Public Key</label><input class="form-control" id="stKey" value="' + (settings.emailjs_public_key || '') + '" placeholder="e.g. user_xxxx"></div>' +
     '<div class="form-group"><label>Auto-send on Generation</label><div style="margin-top:8px"><label class="btn-check"><input type="checkbox" id="stAuto" ' + (settings.auto_send ? 'checked' : '') + '> Enable automatic email sending</label></div></div>' +
-    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div></div></div>';
+    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div></div>' +
+    '<div class="form-card" style="margin-top:24px"><div class="form-section-title">Data Backup &amp; Restore</div>' +
+    '<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Export all your data to a JSON file and import it on any browser to restore your loans, borrowers, payments, and settings.</p>' +
+    '<div class="form-actions" style="gap:12px;flex-wrap:wrap;">' +
+    '<button class="btn btn-primary" onclick="exportData()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:middle"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export Data</button>' +
+    '<label class="btn btn-secondary" style="cursor:pointer;display:inline-flex;align-items:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import Data<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>' +
+    '</div></div></div>';
 });
 
 function saveSettings() {
@@ -656,6 +754,60 @@ function saveSettings() {
   save();
   initEmailJS();
   toast('Settings saved!');
+}
+
+function exportData() {
+  var data = {
+    version: 1,
+    exported: new Date().toISOString(),
+    lp_loans: loans,
+    lp_borrowers: borrowers,
+    lp_payments: payments,
+    lp_activity: activity,
+    lp_settings: settings
+  };
+  var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'loanpro-backup-' + new Date().toISOString().split('T')[0] + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Data exported successfully!', 'success');
+}
+
+function importData(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      if (!data.lp_loans || !data.lp_borrowers || !data.lp_payments) {
+        toast('Invalid backup file.', 'error');
+        return;
+      }
+      if (!confirm('This will overwrite all current data with the imported data. Continue?')) {
+        event.target.value = '';
+        return;
+      }
+      loans     = data.lp_loans     || [];
+      borrowers = data.lp_borrowers || [];
+      payments  = data.lp_payments  || [];
+      activity  = data.lp_activity  || [];
+      if (data.lp_settings && typeof data.lp_settings === 'object') {
+        Object.assign(settings, data.lp_settings);
+        settings.emailjs_service  = 'default_service';
+        settings.emailjs_template = 'template_53kpkj7';
+      }
+      save();
+      toast('Data imported successfully! Reloading…', 'success');
+      setTimeout(function() { location.reload(); }, 1500);
+    } catch(err) {
+      toast('Failed to read file. Make sure it is a valid JSON backup.', 'error');
+    }
+  };
+  reader.readAsText(file);
 }
 
 function sendLoanEmail(loanId) {
@@ -1017,11 +1169,77 @@ function createPDFObject(loanId) {
   // ═══════════════════════════════════════════════════════
   // FOOTER BAR
   // ═══════════════════════════════════════════════════════
-  doc.setFillColor(248, 250, 252);
-  doc.rect(0, pageH - 6, pageW, 6, 'F');
-  doc.setFontSize(5.5);
-  doc.setTextColor(148, 163, 184);
-  doc.text('This is a system-generated document. LoanPro Loan Management System.', 105, pageH - 2.5, { align: 'center' });
+  var totalPages = doc.internal.getNumberOfPages();
+  for (var pi = 1; pi <= totalPages; pi++) {
+    doc.setPage(pi);
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, pageH - 6, pageW, 6, 'F');
+    doc.setFontSize(5.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text('This is a system-generated document. LoanPro Loan Management System. Page ' + pi + ' of ' + totalPages, 105, pageH - 2.5, { align: 'center' });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // ATTACHMENTS APPENDIX
+  // ═══════════════════════════════════════════════════════
+  var hasAttachments = false;
+  if (loan.attachments && (loan.attachments.idFront || loan.attachments.idBack)) hasAttachments = true;
+  if (loan.comakers && loan.comakers.some(function(cm) { return cm.idFront || cm.idBack; })) hasAttachments = true;
+
+  if (hasAttachments) {
+    doc.addPage();
+    var atY = 20;
+    doc.setFillColor(13, 148, 136);
+    doc.rect(0, 0, pageW, 12, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('APPENDIX: ID ATTACHMENTS', M.left, 8);
+
+    function addImageBlock(title, front, back) {
+      if (!front && !back) return;
+      if (atY > pageH - 60) { doc.addPage(); atY = 20; }
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text(title, M.left, atY);
+      atY += 6;
+      
+      var imgW = 80;
+      var imgH = 50;
+      var startX = M.left;
+      
+      if (front) {
+        doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+        doc.text('Front ID', startX, atY);
+        try { doc.addImage(front, 'JPEG', startX, atY + 2, imgW, imgH); } catch(e){}
+      }
+      if (back) {
+        var bx = front ? startX + imgW + 10 : startX;
+        doc.setFontSize(8); doc.setTextColor(100, 116, 139);
+        doc.text('Back ID', bx, atY);
+        try { doc.addImage(back, 'JPEG', bx, atY + 2, imgW, imgH); } catch(e){}
+      }
+      atY += imgH + 15;
+    }
+
+    addImageBlock('Borrower: ' + b.name, loan.attachments && loan.attachments.idFront, loan.attachments && loan.attachments.idBack);
+    
+    if (loan.comakers && loan.comakers.length > 0) {
+      loan.comakers.forEach(function(cm, i) {
+        addImageBlock('Co-Maker ' + (i+1) + ': ' + cm.name, cm.idFront, cm.idBack);
+      });
+    }
+
+    // Apply footer to appendix pages
+    var appendPages = doc.internal.getNumberOfPages();
+    for (var pi = totalPages + 1; pi <= appendPages; pi++) {
+      doc.setPage(pi);
+      doc.setFillColor(248, 250, 252); doc.rect(0, pageH - 6, pageW, 6, 'F');
+      doc.setFontSize(5.5); doc.setTextColor(148, 163, 184);
+      doc.text('This is a system-generated document. Appendix Page', 105, pageH - 2.5, { align: 'center' });
+    }
+  }
 
   return doc;
 }
