@@ -120,6 +120,20 @@ function badgeHTML(st){
   var map={active:'badge-active',pending:'badge-pending',overdue:'badge-overdue',closed:'badge-closed',paid:'badge-paid'};
   return '<span class="badge '+(map[st]||'badge-active')+'">'+st+'</span>';
 }
+function paidThisMonth(loanId){
+  var cm=today().slice(0,7);
+  return payments.some(function(p){ return p.loanId===loanId && p.date.slice(0,7)===cm; });
+}
+function getDueLoans(){
+  var todayDate=new Date(today());
+  return loans.filter(function(l){
+    var st=loanStatus(l);
+    if(st==='closed'||st==='paid') return false;
+    if(loanOutstanding(l)<=0) return false;
+    if(l.startDate && new Date(l.startDate)>todayDate) return false;
+    return !paidThisMonth(l.id);
+  }).sort(function(a,b){ return new Date(a.dueDate)-new Date(b.dueDate); });
+}
 
 // ── Router ────────────────────────────────────────────────
 var routes={};
@@ -132,12 +146,13 @@ function navigate(hash){
   document.querySelectorAll('.nav-item').forEach(function(el){
     el.classList.toggle('active',el.dataset.page===base);
   });
-  var labels={dashboard:'Dashboard',loans:'Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings'};
+  var labels={dashboard:'Dashboard',loans:'Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments'};
   document.getElementById('breadcrumbText').textContent=labels[base]||base;
   document.getElementById('badge-loans').textContent=loans.length;
   document.getElementById('badge-borrowers').textContent=borrowers.length;
-  var hasOverdue=loans.some(function(l){ return loanStatus(l)==='overdue'; });
-  document.getElementById('notifDot').classList.toggle('visible',hasOverdue);
+  var dueCnt=getDueLoans().length;
+  document.getElementById('badge-notifications').textContent=dueCnt;
+  document.getElementById('notifDot').classList.toggle('visible',dueCnt>0);
   if(routes[base]){ area.innerHTML=''; routes[base](page,area); }
   else { area.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">Page not found</div></div>'; }
   
@@ -190,7 +205,9 @@ register('dashboard',function(_,area){
       '<div class="table-container"><div class="table-header"><span class="table-title">Recent Loans</span><button class="btn btn-secondary btn-sm" onclick="location.hash=\'#loans\'">View All</button></div>'+
       '<table><thead><tr><th>Borrower</th><th>Amount</th><th>Term</th><th>Status</th></tr></thead><tbody id="dashTbody"></tbody></table></div>'+
       '<div class="card" style="padding:0;overflow:hidden"><div class="table-header"><span class="table-title">Recent Activity</span></div><div id="dashAct" style="padding:0 20px"></div></div>'+
-    '</div></div>';
+    '</div>'+
+    '<div class="table-container" style="margin-top:24px" id="dashDueWrap"></div>'+
+    '</div>';
 
   var tb=document.getElementById('dashTbody');
   var rec=[].concat(loans).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); }).slice(0,6);
@@ -201,6 +218,32 @@ register('dashboard',function(_,area){
   var rAct=activity.slice(0,8);
   if(!rAct.length){ ac.innerHTML='<div style="padding:20px 0;color:var(--text-muted);font-size:13px;text-align:center">No activity yet.</div>'; }
   else { var dm={loan:'activity-dot-loan',payment:'activity-dot-payment',borrower:'activity-dot-borrower',overdue:'activity-dot-overdue'}; rAct.forEach(function(a){ ac.innerHTML+='<div class="activity-item"><div class="activity-dot '+(dm[a.type]||'activity-dot-loan')+'"></div><div style="flex:1;font-size:13px;color:var(--text-secondary)">'+a.msg+'</div><div style="font-size:11px;color:var(--text-muted);white-space:nowrap">'+fmtDate(a.date)+'</div></div>'; }); }
+
+  var dueWrap=document.getElementById('dashDueWrap');
+  var dueList=getDueLoans();
+  if(dueList.length){
+    var todayDate=new Date(today());
+    var dueRows=''; dueList.slice(0,5).forEach(function(l){
+      var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
+      var dd=new Date(l.dueDate);
+      var diff=Math.ceil((dd-todayDate)/(1000*60*60*24));
+      var label=diff<0?'Overdue '+Math.abs(diff)+'d':'Unpaid this month';
+      var color=diff<0?'var(--danger)':'var(--warning)';
+      dueRows+='<tr>'+
+        '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
+        '<td data-label="Due Date">'+fmtDate(l.dueDate)+'</td>'+
+        '<td data-label="Status"><span style="color:'+color+';font-weight:700;font-size:12px">'+label+'</span></td>'+
+        '<td class="td-amount" data-label="Outstanding" style="color:var(--danger)">'+fmt(loanOutstanding(l))+'</td>'+
+        '<td data-label="Actions"><div class="td-actions">'+
+          '<button class="icon-btn icon-btn-pay" title="Record Payment" onclick="openPayModal(\''+l.id+'\')">$</button>'+
+          '<button class="icon-btn icon-btn-view" title="View" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
+        '</div></td></tr>';
+    });
+    dueWrap.innerHTML='<div class="table-header"><span class="table-title" style="color:var(--danger)">⚠ Due Payments ('+dueList.length+')</span><button class="btn btn-secondary btn-sm" onclick="location.hash=\'#notifications\'">View All</button></div>'+
+      '<table><thead><tr><th>Borrower</th><th>Due Date</th><th>Status</th><th>Outstanding</th><th>Actions</th></tr></thead><tbody>'+dueRows+'</tbody></table>';
+  } else {
+    dueWrap.innerHTML='<div class="table-header"><span class="table-title" style="color:var(--success)">✓ No Due Payments</span></div><div style="padding:16px 24px;font-size:13px;color:var(--text-muted)">All loans are on track.</div>';
+  }
 });
 
 // ── Borrowers ──────────────────────────────────────────────
@@ -508,6 +551,7 @@ function renderLT(){
       '<td data-label="Status">'+badgeHTML(st)+'</td>'+
       '<td data-label="Actions"><div class="td-actions">'+
         '<button class="icon-btn icon-btn-view" title="View" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
+        '<button class="icon-btn icon-btn-edit" title="Edit" onclick="editLoan(\''+l.id+'\')">✎</button>'+
         '<button class="icon-btn icon-btn-pay" title="Pay" onclick="openPayModal(\''+l.id+'\')">$</button>'+
         '<button class="icon-btn icon-btn-delete" title="Delete" onclick="delLoan(\''+l.id+'\')">✕</button>'+
       '</div></td></tr>';
@@ -523,6 +567,50 @@ function confirmDelLoan(id){
   loans=loans.filter(function(x){ return x.id!==id; });
   payments=payments.filter(function(x){ return x.loanId!==id; });
   save(); closeModal(); renderLT(); toast('Loan deleted.','info');
+}
+
+function editLoan(id){
+  var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
+  var opts=borrowers.map(function(b){ return '<option value="'+b.id+'"'+(b.id===l.borrowerId?' selected':'')+'>'+b.name+'</option>'; }).join('');
+  var purposes=['Business Capital','Education','Medical','Home Improvement','Personal','Other'];
+  var purpOpts=purposes.map(function(p){ return '<option'+(l.purpose===p?' selected':'')+'>'+p+'</option>'; }).join('');
+  openModal('Edit Loan',
+    '<div class="form-grid">'+
+    '<div class="form-group"><label>Borrower</label><select class="form-control" id="elBor">'+opts+'</select></div>'+
+    '<div class="form-group"><label>Principal (PHP)</label><input class="form-control" id="elAmt" type="number" value="'+l.principal+'"></div>'+
+    '<div class="form-group"><label>Interest Rate (%)</label><input class="form-control" id="elRate" type="number" step="0.1" value="'+l.rate+'"></div>'+
+    '<div class="form-group"><label>Term (months)</label><input class="form-control" id="elTerm" type="number" value="'+l.term+'"></div>'+
+    '<div class="form-group"><label>Interest Type</label><select class="form-control" id="elType"><option value="simple"'+(l.type==='simple'?' selected':'')+'>Simple Interest</option><option value="compound"'+(l.type==='compound'?' selected':'')+'>Reducing Balance</option></select></div>'+
+    '<div class="form-group"><label>Start Date</label><input class="form-control" id="elStart" type="date" value="'+l.startDate+'"></div>'+
+    '<div class="form-group"><label>Purpose</label><select class="form-control" id="elPurp">'+purpOpts+'</select></div>'+
+    '<div class="form-group"><label>Status</label><select class="form-control" id="elStat"><option value="active"'+(l.status==='active'?' selected':'')+'>Active</option><option value="pending"'+(l.status==='pending'?' selected':'')+'>Pending</option><option value="closed"'+(l.status==='closed'?' selected':'')+'>Closed</option></select></div>'+
+    '<div class="form-group full-width"><label>Notes</label><textarea class="form-control" id="elNotes" rows="2">'+(l.notes||'')+'</textarea></div>'+
+    '</div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveEditLoan(\''+id+'\')">Save Changes</button>'
+  );
+}
+function saveEditLoan(id){
+  var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
+  var p=parseFloat(document.getElementById('elAmt').value);
+  var r=parseFloat(document.getElementById('elRate').value);
+  var t=parseInt(document.getElementById('elTerm').value);
+  if(!p||p<=0){ toast('Enter a valid amount.','error'); return; }
+  if(isNaN(r)){ toast('Enter a valid rate.','error'); return; }
+  if(!t||t<1){ toast('Enter a valid term.','error'); return; }
+  var tp=document.getElementById('elType').value;
+  var sd=document.getElementById('elStart').value;
+  var c=calcLoan(p,r,t,tp);
+  var due=new Date(sd); due.setMonth(due.getMonth()+t);
+  l.borrowerId=document.getElementById('elBor').value;
+  l.principal=p; l.rate=r; l.term=t; l.type=tp; l.startDate=sd;
+  l.dueDate=due.toISOString().split('T')[0];
+  l.purpose=document.getElementById('elPurp').value;
+  l.status=document.getElementById('elStat').value;
+  l.notes=document.getElementById('elNotes').value.trim();
+  l.totalInterest=c.totalInterest; l.monthlyPayment=c.monthlyPayment;
+  l.totalAmount=c.totalAmount; l.schedule=c.schedule;
+  save(); closeModal(); toast('Loan updated!');
+  navigate(location.hash);
 }
 
 // ── Loan Detail ────────────────────────────────────────────
@@ -554,6 +642,7 @@ register('loan-detail',function(page,area){
   area.innerHTML='<div class="page">'+
     '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Loan Detail</h1><p class="page-subtitle">'+(b?b.name:'?')+' · #'+loan.id.slice(-6).toUpperCase()+'</p></div>'+
     '<div class="page-actions"><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">← Back</button>'+
+    '<button class="btn btn-secondary" onclick="editLoan(\''+loan.id+'\')">✎ Edit Loan</button>'+
     '<button class="btn btn-secondary" onclick="generatePDF(\''+loan.id+'\')">⬇️ Download PDF</button>'+
     '<button class="btn btn-secondary" onclick="sendLoanEmail(\''+loan.id+'\')">📧 Send Email</button>'+
     (st!=='paid'&&st!=='closed'?'<button class="btn btn-primary" onclick="openPayModal(\''+loan.id+'\')">Record Payment</button>':'')+
@@ -668,7 +757,8 @@ function submitModalPay(lid){
   var amt=parseFloat(document.getElementById('mpAmt').value);
   if(!amt||amt<=0){ toast('Enter a valid amount.','error'); return; }
   recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim());
-  closeModal(); navigate(location.hash||'#dashboard');
+  closeModal();
+  navigate(location.hash||'#dashboard');
 }
 function submitPay(){
   var lid=(document.getElementById('pyLoan')||{}).value||'';
@@ -726,6 +816,55 @@ function drawCharts(){
   var totC=loans.reduce(function(s,l){ return s+loanPaid(l); },0), totO=loans.reduce(function(s,l){ return s+loanOutstanding(l); },0), totP=loans.reduce(function(s,l){ return s+l.principal; },0);
   new Chart(document.getElementById('chOC'),{type:'bar',data:{labels:['Collected','Outstanding','Total Loaned'],datasets:[{data:[totC,totO,totP],backgroundColor:['rgba(16,185,129,0.75)','rgba(244,63,94,0.75)','rgba(20,184,166,0.5)'],borderRadius:6,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
 }
+
+// ── Due Payments / Notifications ──────────────────────────────
+register('notifications', function(_, area) {
+  var todayDate=new Date(today());
+  var dueLoans=getDueLoans();
+
+  var rows='';
+  if(!dueLoans.length){
+    rows='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">All clear — no due payments</div><div class="empty-sub">Loans that are overdue, due today, or due within 7 days will appear here.</div></div>';
+  } else {
+    dueLoans.forEach(function(l){
+      var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
+      var out=loanOutstanding(l);
+      var dd=new Date(l.dueDate);
+      var diffDays=Math.ceil((dd-todayDate)/(1000*60*60*24));
+      var label, color;
+      if(diffDays<0){ label='Overdue by '+Math.abs(diffDays)+' day'+(Math.abs(diffDays)!==1?'s':''); color='var(--danger)'; }
+      else { label='Unpaid this month'; color='var(--warning)'; }
+      rows+='<tr>'+
+        '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
+        '<td data-label="Due Date">'+fmtDate(l.dueDate)+'</td>'+
+        '<td data-label="Urgency"><span style="color:'+color+';font-weight:700;font-size:12px">'+label+'</span></td>'+
+        '<td class="td-amount" data-label="Outstanding" style="color:var(--danger)">'+fmt(out)+'</td>'+
+        '<td data-label="Monthly Payment">'+fmt(l.monthlyPayment)+'</td>'+
+        '<td data-label="Actions"><div class="td-actions">'+
+          '<button class="icon-btn icon-btn-view" title="View Loan" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
+          '<button class="icon-btn icon-btn-pay" title="Record Payment" onclick="openPayModal(\''+l.id+'\')">$</button>'+
+        '</div></td></tr>';
+    });
+  }
+
+  var overdueCount=dueLoans.filter(function(l){ return new Date(l.dueDate)<todayDate; }).length;
+  var activeCount=dueLoans.length-overdueCount;
+  var totalOut=dueLoans.reduce(function(s,l){ return s+loanOutstanding(l); },0);
+
+  area.innerHTML='<div class="page">'+
+    '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Due Payments</h1>'+
+    '<p class="page-subtitle">Active loans with no payment recorded this month.</p></div>'+
+    '<div class="page-actions"><button class="btn btn-secondary" onclick="navigate(\'#notifications\')">↻ Refresh</button></div></div>'+
+    '<div class="kpi-grid" style="margin-bottom:24px">'+
+      '<div class="kpi-card rose"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="kpi-info"><span class="kpi-label">Overdue Loans</span><span class="kpi-value">'+overdueCount+'</span><span class="kpi-sub">Final due date passed</span></div></div>'+
+      '<div class="kpi-card amber"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="kpi-info"><span class="kpi-label">Unpaid This Month</span><span class="kpi-value">'+activeCount+'</span><span class="kpi-sub">No payment yet</span></div></div>'+
+      '<div class="kpi-card teal"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><div class="kpi-info"><span class="kpi-label">Total Outstanding</span><span class="kpi-value" style="font-size:18px">'+fmt(totalOut)+'</span><span class="kpi-sub">Across all due loans</span></div></div>'+
+    '</div>'+
+    '<div class="table-container">'+
+    '<div class="table-header"><span class="table-title">Due Loans ('+dueLoans.length+')</span></div>'+
+    (dueLoans.length?'<table><thead><tr><th>Borrower</th><th>Due Date</th><th>Status</th><th>Outstanding</th><th>Monthly Payment</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table>':rows)+
+    '</div></div>';
+});
 
 // ── Settings ──────────────────────────────────────────────────
 register('settings', function(_, area) {
@@ -1410,6 +1549,10 @@ setTheme(savedTheme);
 themeToggleBtn.addEventListener('click', function() {
   var currentTheme = document.documentElement.getAttribute('data-theme');
   setTheme(currentTheme === 'light' ? 'dark' : 'light');
+});
+
+document.getElementById('notifBtn').addEventListener('click', function(){
+  location.hash='#notifications';
 });
 
 // ── Bootstrap ──────────────────────────────────────────────
