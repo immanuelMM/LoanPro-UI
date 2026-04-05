@@ -129,13 +129,19 @@ function paidThisMonth(loanId){
 function getDueLoans(){
   var todayDate=new Date(today());
   var cm=today().slice(0,7);
+  var currentDay=todayDate.getDate();
+  var daysInMonth=new Date(todayDate.getFullYear(),todayDate.getMonth()+1,0).getDate();
   return loans.filter(function(l){
     var st=loanStatus(l);
     if(st==='closed'||st==='paid') return false;
     if(loanOutstanding(l)<=0) return false;
     if(!l.startDate) return false;
     if(new Date(l.startDate)>todayDate) return false;
-    if(l.startDate.slice(0,7)===cm) return false; // created this month — first payment next month
+    if(l.startDate.slice(0,7)===cm) return false; // started this month — first payment next month
+    // Monthly payment falls on same day-of-month as start date (capped to current month's max days)
+    var payDay=Math.min(new Date(l.startDate).getDate(),daysInMonth);
+    // Show 7 days before due, or any day after due (overdue)
+    if(payDay-currentDay>7) return false;
     return !paidThisMonth(l.id);
   }).sort(function(a,b){ return new Date(a.dueDate)-new Date(b.dueDate); });
 }
