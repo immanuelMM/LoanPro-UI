@@ -122,15 +122,20 @@ function badgeHTML(st){
 }
 function paidThisMonth(loanId){
   var cm=today().slice(0,7);
-  return payments.some(function(p){ return p.loanId===loanId && p.date.slice(0,7)===cm; });
+  return payments.some(function(p){
+    return p.loanId===loanId && (p.createdAt||p.date).slice(0,7)===cm;
+  });
 }
 function getDueLoans(){
   var todayDate=new Date(today());
+  var cm=today().slice(0,7);
   return loans.filter(function(l){
     var st=loanStatus(l);
     if(st==='closed'||st==='paid') return false;
     if(loanOutstanding(l)<=0) return false;
-    if(l.startDate && new Date(l.startDate)>todayDate) return false;
+    if(!l.startDate) return false;
+    if(new Date(l.startDate)>todayDate) return false;
+    if(l.startDate.slice(0,7)===cm) return false; // created this month — first payment next month
     return !paidThisMonth(l.id);
   }).sort(function(a,b){ return new Date(a.dueDate)-new Date(b.dueDate); });
 }
