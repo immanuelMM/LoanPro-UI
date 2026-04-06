@@ -157,9 +157,9 @@ function navigate(hash){
   document.querySelectorAll('.nav-item').forEach(function(el){
     el.classList.toggle('active',el.dataset.page===base);
   });
-  var labels={dashboard:'Dashboard',loans:'Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments'};
+  var labels={dashboard:'Dashboard',loans:'Active Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments',archive:'Archive'};
   document.getElementById('breadcrumbText').textContent=labels[base]||base;
-  document.getElementById('badge-loans').textContent=loans.length;
+  document.getElementById('badge-loans').textContent=loans.filter(function(l){ var s=loanStatus(l); return s!=='paid'&&s!=='closed'; }).length;
   document.getElementById('badge-borrowers').textContent=borrowers.length;
   var dueCnt=getDueLoans().length;
   document.getElementById('badge-notifications').textContent=dueCnt;
@@ -531,10 +531,10 @@ function submitNewLoan(){
 
 // ── Loans List ─────────────────────────────────────────────
 register('loans',function(_,area){
-  area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">All Loans</h1><p class="page-subtitle">Browse and manage every loan.</p></div>'+
-    '<div class="page-actions"><button class="btn btn-primary" onclick="location.hash=\'#new-loan\'">+ New Loan</button></div></div>'+
+  area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">Active Loans</h1><p class="page-subtitle">Active, pending and overdue loans. Completed loans are in Archive.</p></div>'+
+    '<div class="page-actions"><button class="btn btn-secondary" onclick="location.hash=\'#archive\'">🗄 Archive</button><button class="btn btn-primary" onclick="location.hash=\'#new-loan\'">+ New Loan</button></div></div>'+
     '<div class="table-container"><div class="table-header"><span class="table-title">Loans</span><div style="display:flex;gap:10px;flex-wrap:wrap">'+
-    '<select class="filter-select" id="lStF" onchange="renderLT()"><option value="">All Status</option><option value="active">Active</option><option value="pending">Pending</option><option value="overdue">Overdue</option><option value="paid">Paid</option><option value="closed">Closed</option></select>'+
+    '<select class="filter-select" id="lStF" onchange="renderLT()"><option value="">All Active</option><option value="active">Active</option><option value="pending">Pending</option><option value="overdue">Overdue</option></select>'+
     '<div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input id="lSrch" type="text" placeholder="Search..." oninput="renderLT()"></div></div></div>'+
     '<table><thead><tr><th>ID</th><th>Borrower</th><th>Principal</th><th>Monthly</th><th>Outstanding</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead><tbody id="lTbody"></tbody></table></div></div>';
   renderLT();
@@ -544,8 +544,10 @@ function renderLT(){
   var sf=(document.getElementById('lStF')||{}).value||'';
   var q=((document.getElementById('lSrch')||{}).value||'').toLowerCase();
   var fl=loans.filter(function(l){
+    var st=loanStatus(l);
+    if(st==='paid'||st==='closed') return false; // archived
     var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
-    return (!sf||loanStatus(l)===sf)&&(!q||(b&&b.name.toLowerCase().includes(q)));
+    return (!sf||st===sf)&&(!q||(b&&b.name.toLowerCase().includes(q)));
   }).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); });
   if(!fl.length){ tb.innerHTML='<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No loans found</div></div></td></tr>'; return; }
   tb.innerHTML='';
@@ -826,6 +828,47 @@ function drawCharts(){
   new Chart(document.getElementById('chPu'),{type:'doughnut',data:{labels:Object.keys(pm),datasets:[{data:Object.values(pm),backgroundColor:['#6366f1','#14b8a6','#f59e0b','#f43f5e','#10b981','#3b82f6'],borderWidth:0,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},cutout:'60%'}});
   var totC=loans.reduce(function(s,l){ return s+loanPaid(l); },0), totO=loans.reduce(function(s,l){ return s+loanOutstanding(l); },0), totP=loans.reduce(function(s,l){ return s+l.principal; },0);
   new Chart(document.getElementById('chOC'),{type:'bar',data:{labels:['Collected','Outstanding','Total Loaned'],datasets:[{data:[totC,totO,totP],backgroundColor:['rgba(16,185,129,0.75)','rgba(244,63,94,0.75)','rgba(20,184,166,0.5)'],borderRadius:6,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+}
+
+// ── Archive ────────────────────────────────────────────────────
+register('archive',function(_,area){
+  area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">Archive</h1><p class="page-subtitle">Completed and closed loans.</p></div>'+
+    '<div class="page-actions"><button class="btn btn-secondary" onclick="location.hash=\'#loans\'">← Active Loans</button></div></div>'+
+    '<div class="table-container"><div class="table-header"><span class="table-title">Archived Loans</span>'+
+    '<div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input id="archSrch" type="text" placeholder="Search..." oninput="renderArchive()"></div></div>'+
+    '<table><thead><tr><th>ID</th><th>Borrower</th><th>Principal</th><th>Total Paid</th><th>Status</th><th>Closed Date</th><th>Actions</th></tr></thead><tbody id="archTbody"></tbody></table></div></div>';
+  renderArchive();
+});
+function renderArchive(){
+  var tb=document.getElementById('archTbody'); if(!tb) return;
+  var q=((document.getElementById('archSrch')||{}).value||'').toLowerCase();
+  var fl=loans.filter(function(l){
+    var st=loanStatus(l);
+    if(st!=='paid'&&st!=='closed') return false;
+    var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
+    return !q||(b&&b.name.toLowerCase().includes(q));
+  }).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); });
+  if(!fl.length){
+    tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🗄</div><div class="empty-title">No archived loans</div><div class="empty-sub">Paid and closed loans will appear here.</div></div></td></tr>';
+    return;
+  }
+  tb.innerHTML='';
+  fl.forEach(function(l){
+    var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
+    var paid=loanPaid(l), st=loanStatus(l);
+    var closedDate=payments.filter(function(p){ return p.loanId===l.id; }).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); })[0];
+    tb.innerHTML+='<tr>'+
+      '<td data-label="ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+l.id.slice(-6).toUpperCase()+'</td>'+
+      '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
+      '<td class="td-amount" data-label="Principal">'+fmt(l.principal)+'</td>'+
+      '<td data-label="Total Paid" style="color:var(--success);font-weight:700">'+fmt(paid)+'</td>'+
+      '<td data-label="Status">'+badgeHTML(st)+'</td>'+
+      '<td data-label="Closed Date">'+(closedDate?fmtDate(closedDate.date):fmtDate(l.dueDate))+'</td>'+
+      '<td data-label="Actions"><div class="td-actions">'+
+        '<button class="icon-btn icon-btn-view" title="View" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
+        '<button class="icon-btn icon-btn-delete" title="Delete" onclick="delLoan(\''+l.id+'\')">✕</button>'+
+      '</div></td></tr>';
+  });
 }
 
 // ── Due Payments / Notifications ──────────────────────────────
