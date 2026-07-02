@@ -1,4 +1,4 @@
-﻿/* LoanPro — app.js (Reverted to LocalStorage) */
+/* LoanPro — app.js (Reverted to LocalStorage) */
 
 // ── Data ──────────────────────────────────────────────────
 var DB = {
@@ -1366,16 +1366,18 @@ function createPDFObject(loanId) {
     doc.autoTable({
     didAddPage: function(data) { try { data.doc.addImage(PDF_PAGE_BG_B64, "JPEG", -5, -5, pageW+10, pageH+10); } catch(e) {} },
       startY: curY,
-      head: [['ACCOUNT STATEMENT', 'TOTAL PAID', 'OUTSTANDING BALANCE', 'CURRENT STATUS']],
-      body: [[' ', fmt(paid), fmt(out), loanStatus(loan).toUpperCase()]],
+      head: [
+        [{ content: 'ACCOUNT STATEMENT', colSpan: 3, styles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' } }],
+        ['TOTAL PAID', 'OUTSTANDING BALANCE', 'CURRENT STATUS']
+      ],
+      body: [[fmt(paid), fmt(out), loanStatus(loan).toUpperCase()]],
       theme: 'grid',
-      headStyles: sectionHead,
-      bodyStyles: { fontSize: 8, cellPadding: 2.5, fontStyle: 'bold' },
+      headStyles: { fillColor: [71, 85, 105], textColor: [255, 255, 255], fontStyle: 'bold' },
+      bodyStyles: { fontSize: 8.5, cellPadding: 3, fontStyle: 'bold', halign: 'center' },
       columnStyles: {
-        0: { cellWidth: 1 },
-        1: { textColor: [16, 185, 129] },
-        2: { textColor: [244, 63, 94] },
-        3: { textColor: [30, 41, 59] }
+        0: { textColor: [16, 185, 129] },
+        1: { textColor: [244, 63, 94] },
+        2: { textColor: [30, 41, 59] }
       },
       margin: M
     });
@@ -2553,16 +2555,18 @@ function createBankPDFObject(blId){
     doc.autoTable({
     didAddPage: function(data) { try { data.doc.addImage(PDF_PAGE_BG_B64, "JPEG", -5, -5, pageW+10, pageH+10); } catch(e) {} },
       startY:curY,
-      head:[['ACCOUNT STATEMENT','TOTAL PAID','OUTSTANDING BALANCE','CURRENT STATUS']],
-      body:[[' ',fmt(paid),fmt(out),blStatus(bl).toUpperCase()]],
+      head:[
+        [{ content: 'ACCOUNT STATEMENT', colSpan: 3, styles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' } }],
+        ['TOTAL PAID', 'OUTSTANDING BALANCE', 'CURRENT STATUS']
+      ],
+      body:[[fmt(paid),fmt(out),blStatus(bl).toUpperCase()]],
       theme:'grid',
-      headStyles:sectionHead,
-      bodyStyles:{fontSize:8,cellPadding:2.5,fontStyle:'bold'},
+      headStyles:{ fillColor: [71, 85, 105], textColor: [255, 255, 255], fontStyle: 'bold' },
+      bodyStyles:{fontSize:8.5,cellPadding:3,fontStyle:'bold',halign:'center'},
       columnStyles:{
-        0:{cellWidth:1},
-        1:{textColor:[16,185,129]},
-        2:{textColor:[244,63,94]},
-        3:{textColor:[30,41,59]}
+        0:{textColor:[16,185,129]},
+        1:{textColor:[244,63,94]},
+        2:{textColor:[30,41,59]}
       },
       margin:M
     });
