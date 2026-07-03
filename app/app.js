@@ -1396,7 +1396,7 @@ function createPDFObject(loanId) {
     startY: curY,
     head: [['#', 'Payment', 'Principal', 'Interest', 'Balance']],
     body: tableBody,
-    theme: 'striped',
+    theme: 'grid',
     headStyles: { fillColor: [20, 184, 166], fontSize: 10, fontStyle: 'bold', cellPadding: 3 },
     styles: { fontSize: 9.5, cellPadding: 2.5 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
@@ -1550,7 +1550,7 @@ function createPDFObject(loanId) {
   // ═══════════════════════════════════════════════════════
   var totalPages = doc.internal.getNumberOfPages();
   // Build signer list once
-  var pageSigners = [{ label: b.name, role: 'Borrower' }];
+  var pageSigners = [{ label: b.name, role: 'Borrower Signature' }];
   if (loan.comakers && loan.comakers.length > 0) {
     loan.comakers.forEach(function(cm, i) {
       pageSigners.push({ label: cm.name, role: 'Co-Maker ' + (i + 1) });
@@ -2593,7 +2593,7 @@ function createBankPDFObject(blId){
     startY:curY,
     head:[['#','Payment','Principal','Interest','Balance']],
     body:tableBody,
-    theme:'striped',
+    theme:'grid',
     headStyles:{fillColor:[20,184,166],fontSize:10,fontStyle:'bold',cellPadding:3},
     styles:{fontSize:9.5,cellPadding:2.5},
     alternateRowStyles:{fillColor:[248,250,252]},
@@ -2727,7 +2727,7 @@ function createBankPDFObject(blId){
   // ─── FOOTER BAR + SIGNATURE STRIP ON EVERY PAGE ───────────
   var totalPages=doc.internal.getNumberOfPages();
   // Build signer list once
-  var pageSigners=[{label:borrowerName,role:borrowerName}];
+  var pageSigners=[{label:borrowerName,role:'Borrower Signature'}];
   if(bl.comakers && bl.comakers.length>0){
     bl.comakers.forEach(function(cm,i){
       pageSigners.push({label:cm.name,role:'Co-Maker '+(i+1)});

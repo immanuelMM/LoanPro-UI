@@ -108,7 +108,7 @@ Call log:
     - banner [ref=e82]:
       - generic [ref=e84]: New Loan
       - generic [ref=e85]:
-        - generic [ref=e86]: Thu, Jul 2, 2026
+        - generic [ref=e86]: Fri, Jul 3, 2026
         - button "Toggle Light/Dark Mode" [ref=e87] [cursor=pointer]:
           - img [ref=e88]
         - button "Notifications" [ref=e90] [cursor=pointer]:
@@ -144,7 +144,7 @@ Call log:
                   - option "Reducing Balance"
               - generic [ref=e119]:
                 - generic [ref=e120]: Start Date
-                - textbox [ref=e121]: 2026-07-02
+                - textbox [ref=e121]: 2026-07-03
               - generic [ref=e122]:
                 - generic [ref=e123]: Purpose
                 - combobox [ref=e124] [cursor=pointer]:
