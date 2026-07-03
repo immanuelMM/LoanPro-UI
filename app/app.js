@@ -1837,7 +1837,7 @@ register('bank-loans',function(_,area){
   html+='<div class="table-container">';
   html+='<div class="table-header"><span class="table-title">All Bank / Credit Accounts</span>';
   html+='<div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input id="blSrch" type="text" placeholder="Search..." oninput="renderBankLoans()"></div></div>';
-  html+='<table><thead><tr><th>ID</th><th>Account Name</th><th>Type</th><th>Principal</th><th>Monthly</th><th>Outstanding</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead><tbody id="blTbody"></tbody></table>';
+  html+='<table><thead><tr><th>ID</th><th>Borrower</th><th>Account Name</th><th>Type</th><th>Principal</th><th>Monthly</th><th>Outstanding</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead><tbody id="blTbody"></tbody></table>';
   html+='</div>';
   html+='</div>';
   area.innerHTML=html;
@@ -1848,15 +1848,20 @@ function renderBankLoans(){
   var tb=document.getElementById('blTbody'); if(!tb) return;
   var q=((document.getElementById('blSrch')||{}).value||'').toLowerCase();
   var fl=bankLoans.filter(function(bl){
-    return !q||(bl.lender||'').toLowerCase().includes(q)||(bl.accountName||'').toLowerCase().includes(q)||(bl.type||'').toLowerCase().includes(q);
+    var bw=borrowers.find(function(x){ return x.id===bl.borrowerId; });
+    var bname=(bw?bw.name:'').toLowerCase();
+    return !q||(bl.lender||'').toLowerCase().includes(q)||(bl.accountName||'').toLowerCase().includes(q)||(bl.type||'').toLowerCase().includes(q)||bname.includes(q);
   }).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); });
-  if(!fl.length){ tb.innerHTML='<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">🏦</div><div class="empty-title">No bank/credit loans yet</div><div class="empty-sub">Click "+ New Bank/Credit Loan" to add one.</div></div></td></tr>'; return; }
+  if(!fl.length){ tb.innerHTML='<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">🏦</div><div class="empty-title">No bank/credit loans yet</div><div class="empty-sub">Click "+ New Bank/Credit Loan" to add one.</div></div></td></tr>'; return; }
   tb.innerHTML='';
   fl.forEach(function(bl){
     var out=blOutstanding(bl), st=blStatus(bl);
+    var bw=borrowers.find(function(x){ return x.id===bl.borrowerId; });
+    var bname=bw?bw.name:'—';
     tb.innerHTML+='<tr>'+
       '<td data-label="ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+bl.id.slice(-6).toUpperCase()+'</td>'+
-      '<td class="td-primary" data-label="Account">'+(bl.accountName||bl.lender||'—')+'</td>'+
+      '<td class="td-primary" data-label="Borrower" style="cursor:pointer" onclick="location.hash=\'#bank-loan-detail/'+bl.id+'\'" title="'+bname+'">'+bname+'</td>'+
+      '<td data-label="Account">'+(bl.accountName||bl.lender||'—')+'</td>'+
       '<td data-label="Type"><span style="font-size:11px;padding:3px 8px;border-radius:12px;background:var(--surface-3);color:var(--text-secondary)">'+(bl.type||'Bank Loan')+'</span></td>'+
       '<td class="td-amount" data-label="Principal">'+fmt(bl.principal)+'</td>'+
       '<td data-label="Monthly">'+fmt(bl.monthlyPayment)+'</td>'+
@@ -2071,14 +2076,20 @@ register('bank-loan-detail',function(page,area){
     cmHTML += '</div>';
   }
 
-  area.innerHTML='<div class="page">';
-  area.innerHTML+='<div class="page-header"><div class="page-header-info"><h1 class="page-title">Bank Loan Detail</h1><p class="page-subtitle">'+(bl.accountName||bl.lender)+' · #'+bl.id.slice(-6).toUpperCase()+'</p></div>';
-  area.innerHTML+='<div class="page-actions"><button class="btn btn-secondary" onclick="location.hash=\'#bank-loans\'">← Back</button>';
-  area.innerHTML+='<button class="btn btn-secondary" onclick="editBankLoan(\''+bl.id+'\')" >✎ Edit</button>';
-  area.innerHTML+=downloadBankLoanPDFBtn(bl.id);
-  if(st!=='paid'&&st!=='closed') area.innerHTML+='<button class="btn btn-primary" onclick="openBankPayModal(\''+bl.id+'\')" >Record Payment</button>';
-  if(st!=='closed') area.innerHTML+='<button class="btn btn-secondary" onclick="closeBankLoan(\''+bl.id+'\')" >Close Loan</button>';
-  area.innerHTML+='</div></div>';
+  // Build complete page header + action buttons as a single HTML string
+  // to avoid the innerHTML+= re-parse bug where unclosed tags get auto-closed
+  // on each reassignment, which breaks the flex gap on .page-actions buttons.
+  var headerHTML = '<div class="page">';
+  headerHTML += '<div class="page-header">';
+  headerHTML += '<div class="page-header-info"><h1 class="page-title">Bank Loan Detail</h1><p class="page-subtitle">'+(bl.accountName||bl.lender)+' · #'+bl.id.slice(-6).toUpperCase()+'</p></div>';
+  headerHTML += '<div class="page-actions">';
+  headerHTML += '<button class="btn btn-secondary" onclick="location.hash=\'#bank-loans\'">← Back</button>';
+  headerHTML += '<button class="btn btn-secondary" onclick="editBankLoan(\''+bl.id+'\')">✎ Edit</button>';
+  headerHTML += downloadBankLoanPDFBtn(bl.id);
+  if(st!=='paid'&&st!=='closed') headerHTML += '<button class="btn btn-primary" onclick="openBankPayModal(\''+bl.id+'\')">Record Payment</button>';
+  if(st!=='closed') headerHTML += '<button class="btn btn-secondary" onclick="closeBankLoan(\''+bl.id+'\')">Close Loan</button>';
+  headerHTML += '</div></div>';
+  area.innerHTML = headerHTML;
 
   area.innerHTML+='<div class="loan-detail-grid">';
   area.innerHTML+='<div style="display:flex;flex-direction:column;gap:20px">';
