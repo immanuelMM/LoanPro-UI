@@ -934,17 +934,19 @@ function addMonthsISO(iso,n){
   var dim=new Date(y,m+1,0).getDate();
   return isoLocal(new Date(y,m,Math.min(day,dim)));
 }
-// Payments are applied to installments oldest-first; returns each installment's remaining unpaid amount
+// Remaining installments are the full monthly payment each; the final one carries whatever balance is left
 function loanUnpaidInstallments(loan){
-  if(!loan.startDate||!loan.term) return [];
+  if(!loan.startDate||!loan.term||!(loan.monthlyPayment>0)) return [];
   var st=loanStatus(loan);
   if(st==='closed'||st==='paid') return [];
-  var totalPaid=loanPaid(loan), cum=0, out=[];
-  for(var i=1;i<=loan.term;i++){
-    var amt=(loan.schedule&&loan.schedule[i-1])?loan.schedule[i-1].payment:loan.monthlyPayment;
-    cum+=amt;
-    var unpaid=Math.min(amt,Math.max(0,cum-totalPaid));
-    if(unpaid>0.005) out.push({period:i,date:addMonthsISO(loan.startDate,i),amount:unpaid,due:amt});
+  var bal=Math.round(loanOutstanding(loan)*100)/100;
+  if(bal<=0.005) return [];
+  var mp=loan.monthlyPayment;
+  var n=Math.min(loan.term,Math.ceil(bal/mp-1e-6));
+  var out=[];
+  for(var k=0;k<n;k++){
+    var period=loan.term-n+1+k, last=k===n-1;
+    out.push({period:period,date:addMonthsISO(loan.startDate,period),amount:last?bal-mp*(n-1):mp,last:last});
   }
   return out;
 }
@@ -989,9 +991,8 @@ function renderCollections(){
     loanUnpaidInstallments(l).forEach(function(ins){
       if(!inRange(ins.date)) return;
       totUnpaid+=ins.amount; cntUnpaid++;
-      var partial=ins.amount<ins.due-0.005;
       rows.push({kind:ins.date<todayISO?'overdue':'upcoming',date:ins.date,loan:l,borrower:b,amount:ins.amount,
-        details:'Installment '+ins.period+' of '+l.term+(partial?' (partial — '+fmt(ins.due)+' due)':'')});
+        details:'Installment '+ins.period+' of '+l.term+(ins.last?' (remaining balance)':'')});
     });
   });
 
