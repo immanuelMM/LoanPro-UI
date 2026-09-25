@@ -1772,3 +1772,11 @@ select.form-control {
 .w-full {
     width: 100%;
 }
+
+/* --- Collections totals --- */
+tfoot .col-total-row td {
+    padding: 14px 16px;
+    font-weight: 800;
+    border-top: 2px solid var(--border);
+    background: var(--bg-input);
+}

@@ -208,7 +208,7 @@ function navigate(hash){
   document.querySelectorAll('.nav-item').forEach(function(el){
     el.classList.toggle('active',el.dataset.page===base);
   });
-  var labels={dashboard:'Dashboard',loans:'Active Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments',archive:'Archive','bank-loans':'Bank / Credit Loans','bank-loan-detail':'Bank Loan Detail'};
+  var labels={dashboard:'Dashboard',loans:'Active Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments',archive:'Archive',collections:'Collections','bank-loans':'Bank / Credit Loans','bank-loan-detail':'Bank Loan Detail'};
   document.getElementById('breadcrumbText').textContent=labels[base]||base;
   document.getElementById('badge-loans').textContent=loans.filter(function(l){ var s=loanStatus(l); return s!=='paid'&&s!=='closed'; }).length;
   document.getElementById('badge-borrowers').textContent=borrowers.length;
@@ -922,6 +922,121 @@ function renderArchive(){
         '<button class="icon-btn icon-btn-delete" title="Delete" onclick="delLoan(\''+l.id+'\')">✕</button>'+
       '</div></td></tr>';
   });
+}
+
+// ── Collections (Collected / Unpaid by date range) ────────────
+function isoLocal(d){
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+// Installment due dates fall on the loan start's day-of-month, capped to the month's last day
+function addMonthsISO(iso,n){
+  var sp=iso.split('-'), y=+sp[0], m=+sp[1]-1+n, day=+sp[2];
+  var dim=new Date(y,m+1,0).getDate();
+  return isoLocal(new Date(y,m,Math.min(day,dim)));
+}
+// Payments are applied to installments oldest-first; returns each installment's remaining unpaid amount
+function loanUnpaidInstallments(loan){
+  if(!loan.startDate||!loan.term) return [];
+  var st=loanStatus(loan);
+  if(st==='closed'||st==='paid') return [];
+  var totalPaid=loanPaid(loan), cum=0, out=[];
+  for(var i=1;i<=loan.term;i++){
+    var amt=(loan.schedule&&loan.schedule[i-1])?loan.schedule[i-1].payment:loan.monthlyPayment;
+    cum+=amt;
+    var unpaid=Math.min(amt,Math.max(0,cum-totalPaid));
+    if(unpaid>0.005) out.push({period:i,date:addMonthsISO(loan.startDate,i),amount:unpaid,due:amt});
+  }
+  return out;
+}
+
+register('collections',function(_,area){
+  var now=new Date();
+  var from=isoLocal(new Date(now.getFullYear(),now.getMonth(),1));
+  var to=isoLocal(new Date(now.getFullYear(),now.getMonth()+1,0));
+  area.innerHTML='<div class="page"><div class="page-header"><div class="page-header-info"><h1 class="page-title">Collections</h1><p class="page-subtitle">Collected payments and unpaid installments within a date range.</p></div></div>'+
+    '<div class="stats-row" id="colStats"></div>'+
+    '<div class="table-container"><div class="table-header"><span class="table-title" id="colTitle">Collections</span><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+    '<label style="font-size:12px;color:var(--text-muted)">From</label><input type="date" class="filter-select" id="colFrom" value="'+from+'" onchange="renderCollections()">'+
+    '<label style="font-size:12px;color:var(--text-muted)">To</label><input type="date" class="filter-select" id="colTo" value="'+to+'" onchange="renderCollections()">'+
+    '<select class="filter-select" id="colType" onchange="renderCollections()"><option value="">Collected &amp; Unpaid</option><option value="collected">Collected</option><option value="unpaid">Unpaid</option></select>'+
+    '<div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input id="colSrch" type="text" placeholder="Search borrower..." oninput="renderCollections()"></div></div></div>'+
+    '<table><thead><tr><th>Date</th><th>Borrower</th><th>Loan ID</th><th>Details</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead><tbody id="colTbody"></tbody><tfoot id="colTfoot"></tfoot></table></div></div>';
+  renderCollections();
+});
+function renderCollections(){
+  var tb=document.getElementById('colTbody'); if(!tb) return;
+  var from=(document.getElementById('colFrom')||{}).value||'';
+  var to=(document.getElementById('colTo')||{}).value||'';
+  var type=(document.getElementById('colType')||{}).value||'';
+  var q=((document.getElementById('colSrch')||{}).value||'').toLowerCase();
+  if(from&&to&&from>to){ var t=from; from=to; to=t; }
+  function inRange(d){ return (!from||d>=from)&&(!to||d<=to); }
+  function borrowerOf(l){ return l?borrowers.find(function(x){ return x.id===l.borrowerId; }):null; }
+  function matches(b){ return !q||(b&&b.name.toLowerCase().includes(q)); }
+  var todayISO=isoLocal(new Date());
+  var rows=[], totColl=0, totUnpaid=0, cntColl=0, cntUnpaid=0;
+
+  payments.forEach(function(p){
+    if(!p.date||!inRange(p.date)) return;
+    var l=loans.find(function(x){ return x.id===p.loanId; }), b=borrowerOf(l);
+    if(!matches(b)) return;
+    totColl+=p.amount; cntColl++;
+    rows.push({kind:'collected',date:p.date,loan:l,borrower:b,amount:p.amount,details:p.note||'Payment',payId:p.id});
+  });
+  loans.forEach(function(l){
+    var b=borrowerOf(l);
+    if(!matches(b)) return;
+    loanUnpaidInstallments(l).forEach(function(ins){
+      if(!inRange(ins.date)) return;
+      totUnpaid+=ins.amount; cntUnpaid++;
+      var partial=ins.amount<ins.due-0.005;
+      rows.push({kind:ins.date<todayISO?'overdue':'upcoming',date:ins.date,loan:l,borrower:b,amount:ins.amount,
+        details:'Installment '+ins.period+' of '+l.term+(partial?' (partial — '+fmt(ins.due)+' due)':'')});
+    });
+  });
+
+  var stats=document.getElementById('colStats');
+  if(stats) stats.innerHTML=
+    '<div class="stat-mini"><div class="stat-mini-label">Total Collected</div><div class="stat-mini-value" style="color:var(--success)">'+fmt(totColl)+'</div><div style="font-size:12px;color:var(--text-muted)">'+cntColl+' payment'+(cntColl===1?'':'s')+'</div></div>'+
+    '<div class="stat-mini"><div class="stat-mini-label">Total Unpaid</div><div class="stat-mini-value" style="color:var(--danger)">'+fmt(totUnpaid)+'</div><div style="font-size:12px;color:var(--text-muted)">'+cntUnpaid+' installment'+(cntUnpaid===1?'':'s')+'</div></div>'+
+    '<div class="stat-mini"><div class="stat-mini-label">Expected in Period</div><div class="stat-mini-value">'+fmt(totColl+totUnpaid)+'</div><div style="font-size:12px;color:var(--text-muted)">'+(from?fmtDate(from):'…')+' – '+(to?fmtDate(to):'…')+'</div></div>';
+
+  if(type==='collected') rows=rows.filter(function(r){ return r.kind==='collected'; });
+  else if(type==='unpaid') rows=rows.filter(function(r){ return r.kind!=='collected'; });
+  rows.sort(function(a,b){ return a.date.localeCompare(b.date); });
+
+  var title=document.getElementById('colTitle');
+  if(title) title.textContent=type==='collected'?'Collected Payments':type==='unpaid'?'Unpaid Installments':'Collected & Unpaid';
+
+  var tf=document.getElementById('colTfoot');
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No records in this range</div><div class="empty-sub">Adjust the start/end date or filter.</div></div></td></tr>';
+    if(tf) tf.innerHTML='';
+    return;
+  }
+  var badge={collected:'<span class="badge badge-paid">collected</span>',overdue:'<span class="badge badge-overdue">overdue</span>',upcoming:'<span class="badge badge-pending">upcoming</span>'};
+  var html='';
+  rows.forEach(function(r){
+    var isColl=r.kind==='collected';
+    html+='<tr>'+
+      '<td data-label="Date">'+fmtDate(r.date)+'</td>'+
+      '<td class="td-primary" data-label="Borrower">'+(r.borrower?r.borrower.name:'—')+'</td>'+
+      '<td data-label="Loan ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+(r.loan?r.loan.id.slice(-6).toUpperCase():'—')+'</td>'+
+      '<td data-label="Details" style="color:var(--text-muted);font-size:12px">'+r.details+'</td>'+
+      '<td class="td-amount" data-label="Amount" style="color:'+(isColl?'var(--success)':'var(--danger)')+';font-weight:700">'+fmt(r.amount)+'</td>'+
+      '<td data-label="Status">'+badge[r.kind]+'</td>'+
+      '<td data-label="Actions"><div class="td-actions">'+
+        (r.loan?'<button class="icon-btn icon-btn-view" title="View Loan" onclick="location.hash=\'#loan-detail/'+r.loan.id+'\'">👁</button>':'')+
+        (isColl?'<button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+r.payId+'\')">🧾</button>':
+          (r.loan?'<button class="icon-btn icon-btn-pay" title="Record Payment" onclick="openPayModal(\''+r.loan.id+'\')">$</button>':''))+
+      '</div></td></tr>';
+  });
+  tb.innerHTML=html;
+
+  var foot='';
+  if(type!=='unpaid') foot+='<tr class="col-total-row"><td colspan="4" data-label="">Total Collected</td><td class="td-amount" data-label="Amount" style="color:var(--success)">'+fmt(totColl)+'</td><td colspan="2" data-label=""></td></tr>';
+  if(type!=='collected') foot+='<tr class="col-total-row"><td colspan="4" data-label="">Total Unpaid</td><td class="td-amount" data-label="Amount" style="color:var(--danger)">'+fmt(totUnpaid)+'</td><td colspan="2" data-label=""></td></tr>';
+  if(tf) tf.innerHTML=foot;
 }
 
 // ── Due Payments / Notifications ──────────────────────────────
