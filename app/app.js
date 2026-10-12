@@ -167,6 +167,13 @@ function loanStatus(loan){
   if(loan.dueDate && new Date(loan.dueDate)<new Date()) return 'overdue';
   return loan.status||'active';
 }
+// Months left, counted like loanUnpaidInstallments: full monthly payments, last one carries the remainder
+function remainingMonths(outstanding,mp,term){
+  if(!term) return 0;
+  if(outstanding<=0.005) return 0;
+  if(!(mp>0)) return term;
+  return Math.min(term,Math.ceil(outstanding/mp-1e-6));
+}
 function badgeHTML(st){
   var map={active:'badge-active',pending:'badge-pending',overdue:'badge-overdue',closed:'badge-closed',paid:'badge-paid'};
   return '<span class="badge '+(map[st]||'badge-active')+'">'+st+'</span>';
@@ -1876,9 +1883,9 @@ function generateImageReceipt(payId) {
   dy += 18; ctx.setLineDash([3, 3]); ctx.strokeStyle = '#d1d5db';
   ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke(); ctx.setLineDash([]);
 
-  dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Remaining Balance', dx, dy);
-  ctx.textAlign = 'right'; var outstanding = loanOutstanding(loan);
-  ctx.fillStyle = outstanding > 0 ? '#ef4444' : '#16a34a'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(fmt(outstanding), rightX, dy);
+  dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Remaining Months', dx, dy);
+  ctx.textAlign = 'right'; var monthsLeft = remainingMonths(loanOutstanding(loan), loan.monthlyPayment, loan.term);
+  ctx.fillStyle = monthsLeft > 0 ? '#ef4444' : '#16a34a'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(monthsLeft + '/' + loan.term, rightX, dy);
 
   dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Loan Status', dx, dy);
   ctx.textAlign = 'right'; var st = loanStatus(loan); var stColors = { active: '#0056d2', paid: '#16a34a', overdue: '#ef4444', closed: '#6b7280', pending: '#f59e0b' };
@@ -2443,9 +2450,9 @@ function downloadBankReceipt(pid){
   dy+=18; ctx.setLineDash([3,3]); ctx.strokeStyle='#d1d5db';
   ctx.beginPath(); ctx.moveTo(dx,dy); ctx.lineTo(rightX,dy); ctx.stroke(); ctx.setLineDash([]);
 
-  dy+=rh; ctx.textAlign='left'; ctx.fillStyle='#6b7280'; ctx.font='400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Remaining Balance',dx,dy);
-  ctx.textAlign='right'; var outstanding=blOutstanding(bl);
-  ctx.fillStyle=outstanding>0?'#ef4444':'#16a34a'; ctx.font='bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(fmt(outstanding),rightX,dy);
+  dy+=rh; ctx.textAlign='left'; ctx.fillStyle='#6b7280'; ctx.font='400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Remaining Months',dx,dy);
+  ctx.textAlign='right'; var monthsLeft=remainingMonths(blOutstanding(bl),bl.monthlyPayment,bl.term);
+  ctx.fillStyle=monthsLeft>0?'#ef4444':'#16a34a'; ctx.font='bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(monthsLeft+'/'+bl.term,rightX,dy);
 
   dy+=rh; ctx.textAlign='left'; ctx.fillStyle='#6b7280'; ctx.font='400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Loan Status',dx,dy);
   ctx.textAlign='right'; var st=blStatus(bl); var stColors={active:'#0d9488',paid:'#16a34a',overdue:'#ef4444',closed:'#6b7280',pending:'#f59e0b'};
