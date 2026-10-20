@@ -183,30 +183,24 @@ function badgeHTML(st){
   var map={active:'badge-active',pending:'badge-pending',overdue:'badge-overdue',closed:'badge-closed',paid:'badge-paid'};
   return '<span class="badge '+(map[st]||'badge-active')+'">'+st+'</span>';
 }
-function paidThisMonth(loanId){
-  var cm=today().slice(0,7);
-  return payments.some(function(p){
-    return p.loanId===loanId && (p.createdAt||p.date).slice(0,7)===cm;
-  });
+// Unpaid installments that are past due, due this month, or fall within the next 7 days. Based on amounts
+// paid, not on whether a payment was entered this month, so a late or partial payment (e.g. ₱500 of a
+// ₱2,000 installment) keeps the installment due for the remainder until it is fully paid
+function dueInstallments(loan){
+  var now=new Date(), limit=new Date(now.getFullYear(),now.getMonth(),now.getDate()+7);
+  var monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0);
+  var limitISO=isoLocal(limit>monthEnd?limit:monthEnd);
+  // The installment currently being paid toward also shows once ₱1+ is paid on it, even if it falls due
+  // within the next month (e.g. ₱500 paid toward next month's installment); centavo overpayments and
+  // borrowers paying months ahead don't count
+  var unpaid=loanUnpaidInstallments(loan);
+  var partial=unpaid.length>0&&unpaid[0].date<=addMonthsISO(isoLocal(now),1)&&
+    loanPaid(loan)>=loan.monthlyPayment*(unpaid[0].period-1)+1;
+  return unpaid.filter(function(i,k){ return i.date<=limitISO||(k===0&&partial); });
 }
 function getDueLoans(){
-  var todayDate=new Date(today());
-  var cm=today().slice(0,7);
-  var currentDay=todayDate.getDate();
-  var daysInMonth=new Date(todayDate.getFullYear(),todayDate.getMonth()+1,0).getDate();
-  return loans.filter(function(l){
-    var st=loanStatus(l);
-    if(st==='closed'||st==='paid') return false;
-    if(loanOutstanding(l)<=0) return false;
-    if(!l.startDate) return false;
-    if(new Date(l.startDate)>todayDate) return false;
-    if(l.startDate.slice(0,7)===cm) return false; // started this month — first payment next month
-    // Monthly payment falls on same day-of-month as start date (capped to current month's max days)
-    var payDay=Math.min(new Date(l.startDate).getDate(),daysInMonth);
-    // Show 7 days before due, or any day after due (overdue)
-    if(payDay-currentDay>7) return false;
-    return !paidThisMonth(l.id);
-  }).sort(function(a,b){ return new Date(a.dueDate)-new Date(b.dueDate); });
+  return loans.filter(function(l){ return dueInstallments(l).length>0; })
+    .sort(function(a,b){ return dueInstallments(a)[0].date.localeCompare(dueInstallments(b)[0].date); });
 }
 
 // ── Router ────────────────────────────────────────────────
@@ -946,19 +940,24 @@ function addMonthsISO(iso,n){
   var dim=new Date(y,m+1,0).getDate();
   return isoLocal(new Date(y,m,Math.min(day,dim)));
 }
-// Remaining installments are the full monthly payment each; the final one carries whatever balance is left
+// An installment is paid only once total payments reach its cumulative due amount, so a partially paid
+// installment stays unpaid (and due) until completed. Each installment allows 1 centavo of slack for the
+// rounded amount the payment form pre-fills (e.g. 3333.33 for 3333.333…); the final one carries what's left
 function loanUnpaidInstallments(loan){
   if(!loan.startDate||!loan.term||!(loan.monthlyPayment>0)) return [];
   var st=loanStatus(loan);
   if(st==='closed'||st==='paid') return [];
-  var bal=Math.round(loanOutstanding(loan)*100)/100;
-  if(bal<=0.005) return [];
-  var mp=loan.monthlyPayment;
-  var n=Math.min(loan.term,Math.ceil(bal/mp-1e-6));
-  var out=[];
-  for(var k=0;k<n;k++){
-    var period=loan.term-n+1+k, last=k===n-1;
-    out.push({period:period,date:addMonthsISO(loan.startDate,period),amount:last?bal-mp*(n-1):mp,last:last});
+  function r2(x){ return Math.round(x*100)/100; }
+  var term=+loan.term, mp=loan.monthlyPayment, total=r2(loan.totalAmount), paid=r2(loanPaid(loan));
+  if(total-paid<=0.005) return [];
+  var out=[], covered=paid;
+  for(var period=1;period<=term;period++){
+    var last=period===term, due=last?total:r2(mp*period);
+    if(!last&&paid>=due-0.01*period) continue;
+    var amt=r2(due-covered);
+    covered=Math.max(covered,due);
+    if(amt<=0.005) continue;
+    out.push({period:period,date:addMonthsISO(loan.startDate,period),amount:amt,last:last});
   }
   return out;
 }
@@ -1054,27 +1053,35 @@ function renderCollections(){
 
 // ── Due Payments / Notifications ──────────────────────────────
 register('notifications', function(_, area) {
-  var todayDate=new Date(today());
+  var todayDate=new Date(isoLocal(new Date()));
   var dueLoans=getDueLoans();
 
   var rows='';
   if(!dueLoans.length){
-    rows='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">All clear — no due payments</div><div class="empty-sub">Loans that are overdue, due today, or due within 7 days will appear here.</div></div>';
+    rows='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">All clear — no due payments</div><div class="empty-sub">Loans with an installment overdue, due this month, or due within 7 days will appear here.</div></div>';
   } else {
     dueLoans.forEach(function(l){
       var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
-      var out=loanOutstanding(l);
-      var dd=new Date(l.dueDate);
-      var diffDays=Math.ceil((dd-todayDate)/(1000*60*60*24));
+      var out=loanOutstanding(l), ins=dueInstallments(l), first=ins[0];
+      var amtDue=ins.reduce(function(s,i){ return s+i.amount; },0);
+      var partial=loanPaid(l)>l.monthlyPayment*(first.period-1)+0.01;
+      var diffDays=Math.round((new Date(first.date)-todayDate)/(1000*60*60*24));
       var label, color;
       if(diffDays<0){ label='Overdue by '+Math.abs(diffDays)+' day'+(Math.abs(diffDays)!==1?'s':''); color='var(--danger)'; }
-      else { label='Unpaid this month'; color='var(--warning)'; }
+      else if(diffDays===0){ label='Due today'; color='var(--warning)'; }
+      else { label='Due in '+diffDays+' day'+(diffDays!==1?'s':''); color='var(--warning)'; }
+      if(partial) label+=' · partially paid';
       rows+='<tr>'+
         '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
-        '<td data-label="Due Date">'+fmtDate(l.dueDate)+'</td>'+
+        '<td data-label="Due Date">'+fmtDate(first.date)+'<div style="font-size:11px;color:var(--text-muted)">Installment '+first.period+' of '+l.term+(ins.length>1?' (+'+(ins.length-1)+' more)':'')+'</div>'+
+          '<div style="font-size:11px;font-weight:700;color:var(--danger)">'+fmt(first.amount)+' of '+fmt(first.last?l.totalAmount-l.monthlyPayment*(l.term-1):l.monthlyPayment)+' unpaid</div></td>'+
         '<td data-label="Urgency"><span style="color:'+color+';font-weight:700;font-size:12px">'+label+'</span></td>'+
         '<td class="td-amount" data-label="Outstanding" style="color:var(--danger)">'+fmt(out)+'</td>'+
-        '<td data-label="Monthly Payment">'+fmt(l.monthlyPayment)+'</td>'+
+        '<td class="td-amount" data-label="Amount Due" style="font-weight:700">'+fmt(amtDue)+
+          '<div style="font-size:11px;font-weight:400;color:var(--text-muted)">'+ins.map(function(i){
+            var full=i.last?l.totalAmount-l.monthlyPayment*(l.term-1):l.monthlyPayment;
+            return fmt(i.amount)+' of '+fmt(full)+(ins.length>1?' ('+fmtDate(i.date)+')':'');
+          }).join('<br>')+'</div></td>'+
         '<td data-label="Actions"><div class="td-actions">'+
           '<button class="icon-btn icon-btn-view" title="View Loan" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
           '<button class="icon-btn icon-btn-pay" title="Record Payment" onclick="openPayModal(\''+l.id+'\')">$</button>'+
@@ -1082,22 +1089,22 @@ register('notifications', function(_, area) {
     });
   }
 
-  var overdueCount=dueLoans.filter(function(l){ return new Date(l.dueDate)<todayDate; }).length;
+  var overdueCount=dueLoans.filter(function(l){ return new Date(dueInstallments(l)[0].date)<todayDate; }).length;
   var activeCount=dueLoans.length-overdueCount;
   var totalOut=dueLoans.reduce(function(s,l){ return s+loanOutstanding(l); },0);
 
   area.innerHTML='<div class="page">'+
     '<div class="page-header"><div class="page-header-info"><h1 class="page-title">Due Payments</h1>'+
-    '<p class="page-subtitle">Active loans with no payment recorded this month.</p></div>'+
+    '<p class="page-subtitle">Installments past due, due this month, or due within 7 days, including partially paid ones.</p></div>'+
     '<div class="page-actions"><button class="btn btn-secondary" onclick="navigate(\'#notifications\')">↻ Refresh</button></div></div>'+
     '<div class="kpi-grid" style="margin-bottom:24px">'+
-      '<div class="kpi-card rose"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="kpi-info"><span class="kpi-label">Overdue Loans</span><span class="kpi-value">'+overdueCount+'</span><span class="kpi-sub">Final due date passed</span></div></div>'+
-      '<div class="kpi-card amber"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="kpi-info"><span class="kpi-label">Unpaid This Month</span><span class="kpi-value">'+activeCount+'</span><span class="kpi-sub">No payment yet</span></div></div>'+
+      '<div class="kpi-card rose"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="kpi-info"><span class="kpi-label">Overdue Loans</span><span class="kpi-value">'+overdueCount+'</span><span class="kpi-sub">Installment past due</span></div></div>'+
+      '<div class="kpi-card amber"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="kpi-info"><span class="kpi-label">Due This Month</span><span class="kpi-value">'+activeCount+'</span><span class="kpi-sub">Not yet paid in full</span></div></div>'+
       '<div class="kpi-card teal"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><div class="kpi-info"><span class="kpi-label">Total Outstanding</span><span class="kpi-value" style="font-size:18px">'+fmt(totalOut)+'</span><span class="kpi-sub">Across all due loans</span></div></div>'+
     '</div>'+
     '<div class="table-container">'+
     '<div class="table-header"><span class="table-title">Due Loans ('+dueLoans.length+')</span></div>'+
-    (dueLoans.length?'<table><thead><tr><th>Borrower</th><th>Due Date</th><th>Status</th><th>Outstanding</th><th>Monthly Payment</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table>':rows)+
+    (dueLoans.length?'<table><thead><tr><th>Borrower</th><th>Due Date</th><th>Status</th><th>Outstanding</th><th>Amount Due</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table>':rows)+
     '</div></div>';
 });
 
