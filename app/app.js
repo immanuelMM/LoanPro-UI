@@ -1034,7 +1034,7 @@ function renderCollections(){
       '<td data-label="Date">'+fmtDate(r.date)+'</td>'+
       '<td class="td-primary" data-label="Borrower">'+(r.borrower?r.borrower.name:'—')+'</td>'+
       '<td data-label="Loan ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+(r.loan?r.loan.id.slice(-6).toUpperCase():'—')+'</td>'+
-      '<td data-label="Details" style="color:var(--text-muted);font-size:12px">'+r.details+'</td>'+
+      '<td class="td-stack" data-label="Details" style="color:var(--text-muted);font-size:12px">'+r.details+'</td>'+
       '<td class="td-amount" data-label="Amount" style="color:'+(isColl?'var(--success)':'var(--danger)')+';font-weight:700">'+fmt(r.amount)+'</td>'+
       '<td data-label="Status">'+badge[r.kind]+'</td>'+
       '<td data-label="Actions"><div class="td-actions">'+
@@ -1073,11 +1073,11 @@ register('notifications', function(_, area) {
       if(partial) label+=' · partially paid';
       rows+='<tr>'+
         '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
-        '<td data-label="Due Date">'+fmtDate(first.date)+'<div style="font-size:11px;color:var(--text-muted)">Installment '+first.period+' of '+l.term+(ins.length>1?' (+'+(ins.length-1)+' more)':'')+'</div>'+
+        '<td class="td-stack" data-label="Due Date">'+fmtDate(first.date)+'<div style="font-size:11px;color:var(--text-muted)">Installment '+first.period+' of '+l.term+(ins.length>1?' (+'+(ins.length-1)+' more)':'')+'</div>'+
           '<div style="font-size:11px;font-weight:700;color:var(--danger)">'+fmt(first.amount)+' of '+fmt(first.last?l.totalAmount-l.monthlyPayment*(l.term-1):l.monthlyPayment)+' unpaid</div></td>'+
-        '<td data-label="Urgency"><span style="color:'+color+';font-weight:700;font-size:12px">'+label+'</span></td>'+
+        '<td class="td-stack" data-label="Urgency"><span style="color:'+color+';font-weight:700;font-size:12px">'+label+'</span></td>'+
         '<td class="td-amount" data-label="Outstanding" style="color:var(--danger)">'+fmt(out)+'</td>'+
-        '<td class="td-amount" data-label="Amount Due" style="font-weight:700">'+fmt(amtDue)+
+        '<td class="td-amount td-stack" data-label="Amount Due" style="font-weight:700">'+fmt(amtDue)+
           '<div style="font-size:11px;font-weight:400;color:var(--text-muted)">'+ins.map(function(i){
             var full=i.last?l.totalAmount-l.monthlyPayment*(l.term-1):l.monthlyPayment;
             return fmt(i.amount)+' of '+fmt(full)+(ins.length>1?' ('+fmtDate(i.date)+')':'');

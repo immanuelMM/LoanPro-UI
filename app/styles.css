@@ -1672,12 +1672,24 @@ select.form-control {
         text-align: left;
         font-weight: 600;
         font-size: 11px;
+        font-family: var(--font);
         text-transform: uppercase;
         color: var(--text-muted);
     }
 
     .td-actions {
         justify-content: flex-end;
+    }
+
+    /* Cells with a main value plus sub-lines (due date / amount due breakdown) stack right-aligned
+       and keep clear of the label on the left */
+    tbody td.td-stack {
+        flex-direction: column;
+        align-items: flex-end;
+        justify-content: center;
+        gap: 2px;
+        padding-left: 42% !important;
+        overflow-wrap: anywhere;
     }
 
     .modal {
