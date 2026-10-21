@@ -179,6 +179,9 @@ function paymentMonth(list,p,key,mp,term,total){
   mine.sort(function(a,b){ return a.x.date<b.x.date?-1:a.x.date>b.x.date?1:a.i-b.i; });
   var paid=0;
   for(var k=0;k<mine.length;k++){ paid+=mine[k].x.amount; if(mine[k].x.id===p.id) break; }
+  return monthProgress(paid,mp,term,total);
+}
+function monthProgress(paid,mp,term,total){
   if(!(mp>0)||!term) return {month:term||0,advance:0,remainder:0,nextMonth:0};
   function r2(x){ return Math.round(x*100)/100; }
   total=total>0?total:mp*term; paid=r2(paid);
@@ -823,16 +826,40 @@ function openPayModal(loanId){
     '<div class="form-grid col-1" style="gap:14px">'+
     '<div class="detail-row"><span class="detail-key">Borrower</span><span class="detail-val">'+(b?b.name:'—')+'</span></div>'+
     '<div class="detail-row"><span class="detail-key">Outstanding</span><span class="detail-val" style="color:var(--danger)">'+fmt(out)+'</span></div>'+
-    '<div class="form-group"><label>Amount (PHP) *</label><input class="form-control" id="mpAmt" type="number" min="1" value="'+loan.monthlyPayment.toFixed(2)+'"></div>'+
+    '<div class="form-group"><label>Amount (PHP) *</label><input class="form-control" id="mpAmt" type="number" min="1" value="'+loan.monthlyPayment.toFixed(2)+'" oninput="updatePayPreview(\''+loanId+'\')"></div>'+
+    '<div class="form-group"><label>Show Advance &amp; Remaining on receipt?</label><div style="display:flex;gap:8px">'+
+      '<button type="button" class="btn btn-primary" id="mpAdvYes" onclick="setPayAdvance(\''+loanId+'\',true)">Yes</button>'+
+      '<button type="button" class="btn btn-secondary" id="mpAdvNo" onclick="setPayAdvance(\''+loanId+'\',false)">No</button>'+
+    '</div><input type="hidden" id="mpAdv" value="1"><div id="mpPreview" style="margin-top:10px"></div></div>'+
     '<div class="form-group"><label>Date</label><input class="form-control" id="mpDate" type="date" value="'+today()+'"></div>'+
     '<div class="form-group"><label>Note</label><input class="form-control" id="mpNote" placeholder="Optional..."></div></div>',
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitModalPay(\''+loanId+'\')">Record</button>'
   );
+  updatePayPreview(loanId);
+}
+function setPayAdvance(loanId,show){
+  document.getElementById('mpAdv').value=show?'1':'0';
+  document.getElementById('mpAdvYes').className='btn '+(show?'btn-primary':'btn-secondary');
+  document.getElementById('mpAdvNo').className='btn '+(show?'btn-secondary':'btn-primary');
+  updatePayPreview(loanId);
+}
+// Months paid after this payment, plus the advance and what's left for the next month when Yes is picked
+function updatePayPreview(loanId){
+  var loan=loans.find(function(x){ return x.id===loanId; }), el=document.getElementById('mpPreview');
+  if(!loan||!el) return;
+  var amt=parseFloat(document.getElementById('mpAmt').value)||0;
+  var pm=monthProgress(loanPaid(loan)+amt,loan.monthlyPayment,loan.term,loan.totalAmount);
+  var html='<div class="detail-row"><span class="detail-key">Payment Month</span><span class="detail-val">'+pm.month+'/'+loan.term+'</span></div>';
+  if(document.getElementById('mpAdv').value==='1'&&pm.advance>0){
+    html+='<div class="detail-row"><span class="detail-key">'+(pm.month>0?'Advance':'Partial Payment')+'</span><span class="detail-val">'+fmt(pm.advance)+'</span></div>'+
+      '<div class="detail-row"><span class="detail-key">Remaining for Month '+pm.nextMonth+'</span><span class="detail-val" style="color:var(--primary)">'+fmt(pm.remainder)+'</span></div>';
+  }
+  el.innerHTML=html;
 }
 function submitModalPay(lid){
   var amt=parseFloat(document.getElementById('mpAmt').value);
   if(!amt||amt<=0){ toast('Enter a valid amount.','error'); return; }
-  recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim());
+  recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim(),document.getElementById('mpAdv').value==='1');
   closeModal();
   navigate(location.hash||'#dashboard');
 }
@@ -844,11 +871,13 @@ function submitPay(){
   recPay(lid,amt,(document.getElementById('pyDate')||{}).value||today(),(document.getElementById('pyNote')||{}).value||'');
   navigate('#payments');
 }
-function recPay(lid,amt,date,note){
+function recPay(lid,amt,date,note,showAdvance){
   var loan=loans.find(function(x){ return x.id===lid; });
   var b=loan?borrowers.find(function(x){ return x.id===loan.borrowerId; }):null;
   var pid = uid();
-  payments.push({id:pid,loanId:lid,amount:amt,date:date,note:note,createdAt:new Date().toISOString()});
+  var pay={id:pid,loanId:lid,amount:amt,date:date,note:note,createdAt:new Date().toISOString()};
+  if(showAdvance===false) pay.showAdvance=false;
+  payments.push(pay);
   logActivity('payment','Payment of '+fmt(amt)+' recorded for '+(b?b.name:'loan'));
   save(); 
   toast(fmt(amt)+' payment recorded!');
@@ -1813,11 +1842,12 @@ function generateImageReceipt(payId) {
   var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
   if (!b) return;
   var pm = paymentMonth(payments, p, 'loanId', loan.monthlyPayment, loan.term, loan.totalAmount);
+  var showAdv = pm.advance > 0 && p.showAdvance !== false;
 
   var canvas = document.createElement('canvas');
   var ctx = canvas.getContext('2d');
   
-  var W = 420, H = 750 + (pm.advance > 0 ? 56 : 0);
+  var W = 420, H = 750 + (showAdv ? 56 : 0);
   var dpr = window.devicePixelRatio || 2;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
@@ -1908,7 +1938,7 @@ function generateImageReceipt(payId) {
   dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Payment Month', dx, dy);
   ctx.textAlign = 'right';
   ctx.fillStyle = loanOutstanding(loan) <= 0 && pm.month >= loan.term ? '#16a34a' : '#0056d2'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(pm.month + '/' + loan.term, rightX, dy);
-  if (pm.advance > 0) {
+  if (showAdv) {
     rh = 28;
     drawRow(pm.month > 0 ? 'Advance' : 'Partial Payment', fmt(pm.advance), false, true);
     drawRow('Remaining for Month ' + pm.nextMonth, fmt(pm.remainder), true, true);
