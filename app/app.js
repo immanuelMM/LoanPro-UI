@@ -1,4 +1,4 @@
-/* LoanPro — app.js (Reverted to LocalStorage) */
+/* Hiramo — app.js (Reverted to LocalStorage) */
 
 // ── Data ──────────────────────────────────────────────────
 var DB = {
@@ -12,6 +12,10 @@ var payments     = DB.get('lp_payments');
 var activity     = DB.get('lp_activity');
 var bankLoans    = DB.get('lp_bank_loans');
 var bankPayments = DB.get('lp_bank_payments');
+
+// ── Lender ────────────────────────────────────────────────
+var LENDER_NAME    = 'Loan System Inc.';
+var LENDER_PARTNER = 'Immanuel M. Mahusay';
 var storedSettings = localStorage.getItem('lp_settings');
 var settings = { emailjs_service: 'default_service', emailjs_template: 'template_53kpkj7', emailjs_public_key: 'QsV4vGpnW4fLkBGMU', auto_send: true };
 
@@ -167,17 +171,21 @@ function loanStatus(loan){
   if(loan.dueDate && new Date(loan.dueDate)<new Date()) return 'overdue';
   return loan.status||'active';
 }
-// Which installment month a payment lands in, by cumulative amount paid up to and including it
-// (oldest first, ties keep recorded order), so weekly/partial payments don't each count as a month
-function paymentMonth(list,p,key,mp,term){
+// Installment months fully paid by cumulative amount up to and including this payment (oldest first,
+// ties keep recorded order). Anything over the last full month is an advance toward the next one, e.g.
+// ₱2,500 on ₱2,000/month is month 1 with ₱500 advance and ₱1,500 remaining for month 2
+function paymentMonth(list,p,key,mp,term,total){
   var mine=list.map(function(x,i){ return {x:x,i:i}; }).filter(function(o){ return o.x[key]===p[key]; });
   mine.sort(function(a,b){ return a.x.date<b.x.date?-1:a.x.date>b.x.date?1:a.i-b.i; });
   var paid=0;
   for(var k=0;k<mine.length;k++){ paid+=mine[k].x.amount; if(mine[k].x.id===p.id) break; }
-  if(!(mp>0)||!term) return {month:term||0,paidInMonth:paid,monthDue:paid};
-  var month=Math.min(term,Math.max(1,Math.ceil(paid/mp-1e-6)));
-  var paidInMonth=month===term?paid-mp*(term-1):Math.min(mp,paid-mp*(month-1));
-  return {month:month,paidInMonth:Math.max(0,paidInMonth),monthDue:mp};
+  if(!(mp>0)||!term) return {month:term||0,advance:0,remainder:0,nextMonth:0};
+  function r2(x){ return Math.round(x*100)/100; }
+  total=total>0?total:mp*term; paid=r2(paid);
+  var month=paid>=total-0.005?term:Math.min(term-1,Math.floor(paid/mp+1e-6));
+  var advance=month>=term?0:r2(paid-mp*month);
+  var nextDue=month+1===term?r2(total-mp*(term-1)):mp;
+  return {month:month,advance:advance,remainder:advance>0.005?r2(nextDue-advance):0,nextMonth:month+1};
 }
 function badgeHTML(st){
   var map={active:'badge-active',pending:'badge-pending',overdue:'badge-overdue',closed:'badge-closed',paid:'badge-paid'};
@@ -185,18 +193,13 @@ function badgeHTML(st){
 }
 // Unpaid installments that are past due, due this month, or fall within the next 7 days. Based on amounts
 // paid, not on whether a payment was entered this month, so a late or partial payment (e.g. ₱500 of a
-// ₱2,000 installment) keeps the installment due for the remainder until it is fully paid
+// ₱2,000 installment) keeps the installment due for the remainder until it is fully paid. An advance
+// toward a later installment doesn't list it early; it shows once its own due date comes around
 function dueInstallments(loan){
   var now=new Date(), limit=new Date(now.getFullYear(),now.getMonth(),now.getDate()+7);
   var monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0);
   var limitISO=isoLocal(limit>monthEnd?limit:monthEnd);
-  // The installment currently being paid toward also shows once ₱1+ is paid on it, even if it falls due
-  // within the next month (e.g. ₱500 paid toward next month's installment); centavo overpayments and
-  // borrowers paying months ahead don't count
-  var unpaid=loanUnpaidInstallments(loan);
-  var partial=unpaid.length>0&&unpaid[0].date<=addMonthsISO(isoLocal(now),1)&&
-    loanPaid(loan)>=loan.monthlyPayment*(unpaid[0].period-1)+1;
-  return unpaid.filter(function(i,k){ return i.date<=limitISO||(k===0&&partial); });
+  return loanUnpaidInstallments(loan).filter(function(i){ return i.date<=limitISO; });
 }
 function getDueLoans(){
   return loans.filter(function(l){ return dueInstallments(l).length>0; })
@@ -724,6 +727,7 @@ register('loan-detail',function(page,area){
     '<div style="display:flex;flex-direction:column;gap:20px">'+
       '<div class="card"><div class="form-section-title">Loan Summary</div>'+
         '<div class="detail-row"><span class="detail-key">Borrower</span><span class="detail-val">'+(b?b.name:'—')+'</span></div>'+
+        '<div class="detail-row"><span class="detail-key">Lender</span><span class="detail-val">'+LENDER_NAME+' / partner '+LENDER_PARTNER+'</span></div>'+
         '<div class="detail-row"><span class="detail-key">Principal</span><span class="detail-val">'+fmt(loan.principal)+'</span></div>'+
         '<div class="detail-row"><span class="detail-key">Interest Rate</span><span class="detail-val">'+loan.rate+'% ('+loan.type+')</span></div>'+
         '<div class="detail-row"><span class="detail-key">Term</span><span class="detail-val">'+loan.term+' months</span></div>'+
@@ -1151,7 +1155,7 @@ function exportData() {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
-  a.download = 'loanpro-backup-' + new Date().toISOString().split('T')[0] + '.json';
+  a.download = 'hiramo-backup-' + new Date().toISOString().split('T')[0] + '.json';
   a.click();
   URL.revokeObjectURL(url);
   toast('Data exported successfully!', 'success');
@@ -1251,7 +1255,7 @@ function generatePDF(loanId) {
 
   var loan = loans.find(function(x) { return x.id === loanId; });
   var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
-  var fileName = 'LoanPro_' + b.name.replace(/ /g, '_') + '_' + loan.id.slice(-6).toUpperCase() + '.pdf';
+  var fileName = 'Hiramo_' + b.name.replace(/ /g, '_') + '_' + loan.id.slice(-6).toUpperCase() + '.pdf';
   
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
     window.open(doc.output('bloburl'), '_blank');
@@ -1271,6 +1275,7 @@ function createPDFObject(loanId) {
   if (!loan) return null;
   var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
   if (!b) return null;
+  doc.setProperties({ title: 'Hiramo - Loan Agreement - ' + b.name, author: LENDER_NAME, creator: 'Hiramo' });
 
   var out = loanOutstanding(loan);
   var paid = loanPaid(loan);
@@ -1294,7 +1299,7 @@ function createPDFObject(loanId) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(255, 255, 255);
-  doc.text('LoanPro', M.left, 10);
+  doc.text('Hiramo', M.left, 10);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(203, 213, 225);
@@ -1403,7 +1408,8 @@ function createPDFObject(loanId) {
   
   curY = 32;
 
-  var lenderName = 'Loan System Inc.';
+  var lenderName = LENDER_NAME;
+  var lenderPartner = LENDER_PARTNER;
   var sourceText = isBankCreditLoan(loan)
     ? ' This loan is recorded as a ' + loanSourceLabel(loan) + ', funded through the Lender\'s bank credit facility and not from the Lender\'s personal cash funds.'
     : '';
@@ -1413,7 +1419,7 @@ function createPDFObject(loanId) {
     [{ content: 'by and between:', styles: { cellPadding: { bottom: 4 } } }],
     [{ content: 'Borrower: ' + b.name + ', residing at ' + (b.address || 'N/A'), styles: { cellPadding: { bottom: 4 } } }],
     [{ content: 'AND', styles: { fontStyle: 'bold', halign: 'center', cellPadding: { bottom: 4 } } }],
-    [{ content: 'Lender: ' + lenderName, styles: { cellPadding: { bottom: 8 } } }],
+    [{ content: 'Lender: ' + lenderName + ' / partner ' + lenderPartner, styles: { cellPadding: { bottom: 8 } } }],
     [{ content: 'TERMS AND CONDITIONS', styles: { fontStyle: 'bold', halign: 'center', cellPadding: { bottom: 6 } } }]
   ];
 
@@ -1469,8 +1475,8 @@ function createPDFObject(loanId) {
   });
   curY = doc.lastAutoTable.finalY + 4;
 
-  var agreementSigY = Math.max(curY + 18, pageH - 38);
-  if (agreementSigY > pageH - 24) {
+  var agreementSigY = Math.max(curY + 18, pageH - 43);
+  if (agreementSigY > pageH - 29) {
     doc.addPage();
     try { doc.addImage(PDF_PAGE_BG_B64, "JPEG", -5, -5, pageW+10, pageH+10); } catch(e) {}
     agreementSigY = 60;
@@ -1489,6 +1495,9 @@ function createPDFObject(loanId) {
   doc.setTextColor(15, 23, 42);
   doc.text(b.name, M.left + 43, agreementSigY + 11, { align: 'center' });
   doc.text(lenderName, pageW - M.right - 43, agreementSigY + 11, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('partner ' + lenderPartner, pageW - M.right - 43, agreementSigY + 15.5, { align: 'center' });
 
   // ═══════════════════════════════════════════════════════
   // ACCOUNT STATEMENT (only when payments exist)
@@ -1691,7 +1700,7 @@ function createPDFObject(loanId) {
       pageSigners.push({ label: cm.name, role: 'Co-Maker ' + (i + 1) });
     });
   }
-  pageSigners.push({ label: lenderName, role: 'Lender' });
+  pageSigners.push({ label: lenderPartner, role: 'Lender' });
 
   for (var pi = 1; pi <= totalPages; pi++) {
     doc.setPage(pi);
@@ -1727,7 +1736,7 @@ function createPDFObject(loanId) {
     doc.rect(0, pageH - 6, pageW, 6, 'F');
     doc.setFontSize(5.5);
     doc.setTextColor(148, 163, 184);
-    doc.text('This is a system-generated document. LoanPro Loan Management System. Page ' + pi + ' of ' + totalPages, 105, pageH - 2.5, { align: 'center' });
+    doc.text('This is a system-generated document. Hiramo Loan Management System. Page ' + pi + ' of ' + totalPages, 105, pageH - 2.5, { align: 'center' });
   }
 
   // ═══════════════════════════════════════════════════════
@@ -1803,11 +1812,12 @@ function generateImageReceipt(payId) {
   if (!loan) return;
   var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
   if (!b) return;
+  var pm = paymentMonth(payments, p, 'loanId', loan.monthlyPayment, loan.term, loan.totalAmount);
 
   var canvas = document.createElement('canvas');
   var ctx = canvas.getContext('2d');
   
-  var W = 420, H = 750;
+  var W = 420, H = 750 + (pm.advance > 0 ? 56 : 0);
   var dpr = window.devicePixelRatio || 2;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
@@ -1896,9 +1906,14 @@ function generateImageReceipt(payId) {
   ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke(); ctx.setLineDash([]);
 
   dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Payment Month', dx, dy);
-  ctx.textAlign = 'right'; var pm = paymentMonth(payments, p, 'loanId', loan.monthlyPayment, loan.term);
+  ctx.textAlign = 'right';
   ctx.fillStyle = loanOutstanding(loan) <= 0 && pm.month >= loan.term ? '#16a34a' : '#0056d2'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(pm.month + '/' + loan.term, rightX, dy);
-  dy += 16; ctx.fillStyle = '#9ca3af'; ctx.font = '400 11px "Inter", "Segoe UI", sans-serif'; ctx.fillText(fmt(pm.paidInMonth) + ' of ' + fmt(pm.monthDue) + ' this month', rightX, dy);
+  if (pm.advance > 0) {
+    rh = 28;
+    drawRow(pm.month > 0 ? 'Advance' : 'Partial Payment', fmt(pm.advance), false, true);
+    drawRow('Remaining for Month ' + pm.nextMonth, fmt(pm.remainder), true, true);
+    rh = 36;
+  }
 
   dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Loan Status', dx, dy);
   ctx.textAlign = 'right'; var st = loanStatus(loan); var stColors = { active: '#0056d2', paid: '#16a34a', overdue: '#ef4444', closed: '#6b7280', pending: '#f59e0b' };
@@ -1906,7 +1921,7 @@ function generateImageReceipt(payId) {
 
   // FOOTER
   ctx.textAlign = 'center'; ctx.fillStyle = '#9ca3af'; ctx.font = '400 10px "Inter", "Segoe UI", sans-serif';
-  ctx.fillText('Powered by LoanPro \u00b7 Loan Management System', W / 2, H - 38);
+  ctx.fillText('Powered by Hiramo \u00b7 Loan Management System', W / 2, H - 38);
   ctx.font = '400 9px "Inter", "Segoe UI", sans-serif'; ctx.fillStyle = '#b0b8c4';
   ctx.fillText('This is a system-generated receipt. No signature required.', W / 2, H - 22);
 
@@ -2375,7 +2390,8 @@ function downloadBankReceipt(pid){
   var canvas=document.createElement('canvas');
   var ctx=canvas.getContext('2d');
   
-  var W=420, H=750;
+  var pm=paymentMonth(bankPayments,p,'blId',bl.monthlyPayment,bl.term,bl.totalAmount);
+  var W=420, H=750+(pm.advance>0?56:0);
   var dpr=window.devicePixelRatio||2;
   canvas.width=W*dpr;
   canvas.height=H*dpr;
@@ -2464,9 +2480,14 @@ function downloadBankReceipt(pid){
   ctx.beginPath(); ctx.moveTo(dx,dy); ctx.lineTo(rightX,dy); ctx.stroke(); ctx.setLineDash([]);
 
   dy+=rh; ctx.textAlign='left'; ctx.fillStyle='#6b7280'; ctx.font='400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Payment Month',dx,dy);
-  ctx.textAlign='right'; var pm=paymentMonth(bankPayments,p,'blId',bl.monthlyPayment,bl.term);
+  ctx.textAlign='right';
   ctx.fillStyle=blOutstanding(bl)<=0&&pm.month>=bl.term?'#16a34a':'#0d9488'; ctx.font='bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(pm.month+'/'+bl.term,rightX,dy);
-  dy+=16; ctx.fillStyle='#9ca3af'; ctx.font='400 11px "Inter", "Segoe UI", sans-serif'; ctx.fillText(fmt(pm.paidInMonth)+' of '+fmt(pm.monthDue)+' this month',rightX,dy);
+  if(pm.advance>0){
+    rh=28;
+    drawRow(pm.month>0?'Advance':'Partial Payment',fmt(pm.advance),false,true);
+    drawRow('Remaining for Month '+pm.nextMonth,fmt(pm.remainder),true,true);
+    rh=36;
+  }
 
   dy+=rh; ctx.textAlign='left'; ctx.fillStyle='#6b7280'; ctx.font='400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Loan Status',dx,dy);
   ctx.textAlign='right'; var st=blStatus(bl); var stColors={active:'#0d9488',paid:'#16a34a',overdue:'#ef4444',closed:'#6b7280',pending:'#f59e0b'};
@@ -2474,7 +2495,7 @@ function downloadBankReceipt(pid){
 
   // FOOTER
   ctx.textAlign='center'; ctx.fillStyle='#9ca3af'; ctx.font='400 10px "Inter", "Segoe UI", sans-serif';
-  ctx.fillText('Powered by LoanPro \u00b7 Loan Management System',W/2,H-38);
+  ctx.fillText('Powered by Hiramo \u00b7 Loan Management System',W/2,H-38);
   ctx.font='400 9px "Inter", "Segoe UI", sans-serif'; ctx.fillStyle='#b0b8c4';
   ctx.fillText('This is a system-generated receipt. No signature required.',W/2,H-22);
 
@@ -2490,6 +2511,7 @@ function createBankPDFObject(blId){
   if(!window.jspdf){ toast('PDF library loading...','warning'); return null; }
   var doc=new jspdf.jsPDF({compress:true});
   var bl=bankLoans.find(function(x){ return x.id===blId; }); if(!bl) return null;
+  doc.setProperties({title:'Hiramo - Bank Loan Agreement - '+(bl.accountName||bl.lender||'Bank Loan'),creator:'Hiramo'});
 
   var paid=blPaid(bl), out=blOutstanding(bl), st=blStatus(bl);
   var M={left:12,right:12};
@@ -2512,7 +2534,7 @@ function createBankPDFObject(blId){
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(255, 255, 255);
-  doc.text('LoanPro', M.left, 10);
+  doc.text('Hiramo', M.left, 10);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(203, 213, 225);
@@ -2907,7 +2929,7 @@ function createBankPDFObject(blId){
     doc.rect(0,pageH-6,pageW,6,'F');
     doc.setFontSize(5.5);
     doc.setTextColor(148,163,184);
-    doc.text('This is a system-generated document. LoanPro Loan Management System. Page '+pi+' of '+totalPages,105,pageH-2.5,{align:'center'});
+    doc.text('This is a system-generated document. Hiramo Loan Management System. Page '+pi+' of '+totalPages,105,pageH-2.5,{align:'center'});
   }
 
   // ═══════════════════════════════════════════════════════

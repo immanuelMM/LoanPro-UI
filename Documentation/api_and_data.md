@@ -1,4 +1,4 @@
-# LoanPro — Data Schemas
+# Hiramo — Data Schemas
 
 ## Data Management
 All data is stored in the browser's `localStorage` as JSON strings.

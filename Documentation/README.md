@@ -1,4 +1,4 @@
-# LoanPro — Project Documentation
+# Hiramo — Project Documentation
 
 This folder contains the complete documentation for the **Loan Management System**.
 

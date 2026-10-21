@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-test.describe('LoanPro UI Core Features', () => {
+test.describe('Hiramo UI Core Features', () => {
     
     test.beforeEach(async ({ page }) => {
         // Assuming the app is running on localhost:3000

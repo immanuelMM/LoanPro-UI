@@ -1,7 +1,7 @@
-# LoanPro — User Guide
+# Hiramo — User Guide
 
 ## Getting Started
-To begin using LoanPro, simply open the `index.html` file in any modern browser. All data is stored locally in your browser's storage (`localStorage`), so no server installation is required.
+To begin using Hiramo, simply open the `index.html` file in any modern browser. All data is stored locally in your browser's storage (`localStorage`), so no server installation is required.
 
 ---
 

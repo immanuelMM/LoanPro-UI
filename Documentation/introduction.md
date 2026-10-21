@@ -1,7 +1,7 @@
-# LoanPro — Introduction
+# Hiramo — Introduction
 
 ## Overview
-LoanPro is a lightweight, high-performance **Loan Management System** designed for individual lenders and small finance organizations. It provides a central hub to manage borrowers, track loan applications, record repayments, and visualize financial performance.
+Hiramo is a lightweight, high-performance **Loan Management System** designed for individual lenders and small finance organizations. It provides a central hub to manage borrowers, track loan applications, record repayments, and visualize financial performance.
 
 ## Key Features
 - **Borrower Management**: Register and organize profiles with detailed contact and government ID information.

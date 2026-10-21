@@ -1,7 +1,7 @@
-# LoanPro — Technical Architecture
+# Hiramo — Technical Architecture
 
 ## Application Architecture
-LoanPro is a single-page application (SPA) built using vanilla JavaScript, focusing on performance, simplicity, and ease of deployment.
+Hiramo is a single-page application (SPA) built using vanilla JavaScript, focusing on performance, simplicity, and ease of deployment.
 
 ### 1. Data Layer (`DB` Object)
 The application uses a unified `DB` wrapper around the `localStorage` API. This ensures that all data (Borrowers, Loans, Payments, Activity Logs) is persistent across browser sessions.

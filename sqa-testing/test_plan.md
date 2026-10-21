@@ -1,7 +1,7 @@
 # SQA Test Plan: Loan Management System
 
 ## Objective
-To verify the core functionality of the LoanPro UI, including borrower registration, loan creation, payment recording, and reporting.
+To verify the core functionality of the Hiramo UI, including borrower registration, loan creation, payment recording, and reporting.
 
 ## Test Scenarios
 
