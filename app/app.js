@@ -12,6 +12,8 @@ var payments     = DB.get('lp_payments');
 var activity     = DB.get('lp_activity');
 var bankLoans    = DB.get('lp_bank_loans');
 var bankPayments = DB.get('lp_bank_payments');
+var ccLoans      = DB.get('lp_cc_loans');
+var ccPayments   = DB.get('lp_cc_payments');
 
 // ── Lender ────────────────────────────────────────────────
 var LENDER_NAME    = 'Loan System Inc.';
@@ -39,6 +41,8 @@ function save(){
   DB.set('lp_settings',settings);
   DB.set('lp_bank_loans',bankLoans);
   DB.set('lp_bank_payments',bankPayments);
+  DB.set('lp_cc_loans',ccLoans);
+  DB.set('lp_cc_payments',ccPayments);
 }
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
@@ -220,7 +224,7 @@ function navigate(hash){
   document.querySelectorAll('.nav-item').forEach(function(el){
     el.classList.toggle('active',el.dataset.page===base);
   });
-  var labels={dashboard:'Dashboard',loans:'Active Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments',archive:'Archive',collections:'Collections','bank-loans':'Bank / Credit Loans','bank-loan-detail':'Bank Loan Detail'};
+  var labels={dashboard:'Dashboard',loans:'Active Loans','new-loan':'New Loan',borrowers:'Borrowers','new-borrower':'New Borrower',payments:'Payments',reports:'Reports','loan-detail':'Loan Detail',settings:'Settings',notifications:'Due Payments',archive:'Archive',collections:'Collections','bank-loans':'Bank / Credit Loans','bank-loan-detail':'Bank Loan Detail','cc-loans':'Credit Card Tracker','cc-loan-detail':'Credit Card Detail'};
   document.getElementById('breadcrumbText').textContent=labels[base]||base;
   document.getElementById('badge-loans').textContent=loans.filter(function(l){ var s=loanStatus(l); return s!=='paid'&&s!=='closed'; }).length;
   document.getElementById('badge-borrowers').textContent=borrowers.length;
@@ -229,6 +233,8 @@ function navigate(hash){
   document.getElementById('notifDot').classList.toggle('visible',dueCnt>0);
   var blBadge=document.getElementById('badge-bank-loans');
   if(blBadge) blBadge.textContent=bankLoans.filter(function(bl){ return bl.status!=='closed'; }).length;
+  var ccBadge=document.getElementById('badge-cc-loans');
+  if(ccBadge) ccBadge.textContent=ccLoans.filter(function(c){ var s=ccStatus(c); return s!=='closed'&&s!=='paid'; }).length;
   if(routes[base]){ area.innerHTML=''; routes[base](page,area); }
   else { area.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">Page not found</div></div>'; }
   
@@ -1178,7 +1184,9 @@ function exportData() {
     lp_borrowers: borrowers,
     lp_payments: payments,
     lp_activity: activity,
-    lp_settings: settings
+    lp_settings: settings,
+    lp_cc_loans: ccLoans,
+    lp_cc_payments: ccPayments
   };
   var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   var url = URL.createObjectURL(blob);
@@ -1209,6 +1217,8 @@ function importData(event) {
       borrowers = data.lp_borrowers || [];
       payments  = data.lp_payments  || [];
       activity  = data.lp_activity  || [];
+      if (data.lp_cc_loans)    ccLoans    = data.lp_cc_loans;
+      if (data.lp_cc_payments) ccPayments = data.lp_cc_payments;
       if (data.lp_settings && typeof data.lp_settings === 'object') {
         Object.assign(settings, data.lp_settings);
         settings.emailjs_service  = 'default_service';
@@ -2532,6 +2542,381 @@ function downloadBankReceipt(pid){
   // Download Action
   var link=document.createElement('a');
   link.download='BankLoan_Receipt_'+(bl.accountName||'Loan').replace(/ /g,'_')+'_'+p.id.slice(-6).toUpperCase()+'.png';
+  link.href=canvas.toDataURL('image/png',1.0);
+  link.click();
+}
+
+// ── Credit Card Tracker ────────────────────────────────────
+// Installment plans on credit cards / e-wallet credit: a fixed monthly amount over N months, first due on startDate
+var CC_BANKS={
+  'Banks':['BDO','BPI','Metrobank','RCBC','Security Bank','UnionBank','EastWest Bank','PNB','China Bank','AUB','PSBank','Landbank','HSBC','Maybank','Robinsons Bank','Bank of Commerce'],
+  'E-Wallets & Buy Now Pay Later':['ShopeePay / SPayLater','GCash (GGives / GCredit)','Maya Credit','Lazada PayLater','Home Credit','BillEase','Atome','TendoPay']
+};
+var CC_CHANNELS=['Online Banking','Mobile App','GCash','Maya','Over the Counter','Auto-Debit','Bills Payment Center'];
+
+// Keep the URL hash in sync so the sidebar link and refresh still work after an in-page navigation
+function ccGo(hash){ if(location.hash===hash) navigate(hash); else location.hash=hash; }
+function ccEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function ccTotal(c){ return Math.round(c.monthly*c.months*100)/100; }
+function ccPaid(c){ return ccPayments.filter(function(p){ return p.ccId===c.id; }).reduce(function(s,p){ return s+p.amount; },0); }
+function ccOutstanding(c){ return Math.max(0,Math.round((ccTotal(c)-ccPaid(c))*100)/100); }
+function ccProgress(c){ return monthProgress(ccPaid(c),c.monthly,c.months,ccTotal(c)); }
+function ccNextDue(c){ return ccOutstanding(c)<=0.005?null:addMonthsISO(c.startDate,ccProgress(c).month); }
+function ccStatus(c){
+  if(c.status==='closed') return 'closed';
+  if(ccOutstanding(c)<=0.005) return 'paid';
+  var nd=ccNextDue(c);
+  if(nd && nd<isoLocal(new Date())) return 'overdue';
+  return 'active';
+}
+
+register('cc-loans',function(_,area){
+  var tot=ccLoans.reduce(function(s,c){ return s+ccTotal(c); },0);
+  var out=ccLoans.reduce(function(s,c){ return s+(ccStatus(c)==='closed'?0:ccOutstanding(c)); },0);
+  var paid=ccLoans.reduce(function(s,c){ return s+ccPaid(c); },0);
+  var monthly=ccLoans.reduce(function(s,c){ var st=ccStatus(c); return s+(st==='active'||st==='overdue'?c.monthly:0); },0);
+  var act=ccLoans.filter(function(c){ var st=ccStatus(c); return st==='active'||st==='overdue'; }).length;
+  var html='<div class="page">';
+  html+='<div class="page-header"><div class="page-header-info"><h1 class="page-title">Credit Card Tracker</h1><p class="page-subtitle">Track credit card and e-wallet installments, record monthly payments and download receipts.</p></div>';
+  html+='<div class="page-actions"><button class="btn btn-primary" onclick="openCCModal()">+ New Installment</button></div></div>';
+  html+='<div class="kpi-grid" style="margin-bottom:24px">';
+  html+='<div class="kpi-card amber"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="kpi-info"><span class="kpi-label">Monthly Due</span><span class="kpi-value">'+fmt(monthly)+'</span><span class="kpi-sub">'+act+' active of '+ccLoans.length+'</span></div></div>';
+  html+='<div class="kpi-card rose"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="kpi-info"><span class="kpi-label">Remaining Balance</span><span class="kpi-value">'+fmt(out)+'</span><span class="kpi-sub">of '+fmt(tot)+' total</span></div></div>';
+  html+='<div class="kpi-card emerald"><div class="kpi-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><div class="kpi-info"><span class="kpi-label">Total Paid</span><span class="kpi-value">'+fmt(paid)+'</span><span class="kpi-sub">'+ccPayments.length+' payments</span></div></div>';
+  html+='</div>';
+  html+='<div class="table-container">';
+  html+='<div class="table-header"><span class="table-title">All Installments</span>';
+  html+='<div class="search-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input id="ccSrch" type="text" placeholder="Search name, bank, item..." oninput="renderCCLoans()"></div></div>';
+  html+='<table><thead><tr><th>Name</th><th>Bank</th><th>Item / Purpose</th><th>Monthly</th><th>Paid</th><th>Remaining</th><th>Next Due</th><th>Status</th><th>Actions</th></tr></thead><tbody id="ccTbody"></tbody></table>';
+  html+='</div></div>';
+  area.innerHTML=html;
+  renderCCLoans();
+});
+
+function renderCCLoans(){
+  var tb=document.getElementById('ccTbody'); if(!tb) return;
+  var q=((document.getElementById('ccSrch')||{}).value||'').toLowerCase();
+  var fl=ccLoans.filter(function(c){
+    return !q||[c.name,c.bank,c.item,c.cardLast4].some(function(v){ return (v||'').toLowerCase().includes(q); });
+  }).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); });
+  if(!fl.length){ tb.innerHTML='<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💳</div><div class="empty-title">No credit card installments yet</div><div class="empty-sub">Click "+ New Installment" to add one.</div></div></td></tr>'; return; }
+  var rows='';
+  fl.forEach(function(c){
+    var st=ccStatus(c), pr=ccProgress(c), out=ccOutstanding(c), nd=ccNextDue(c);
+    var pct=Math.min(100,pr.month/c.months*100);
+    rows+='<tr>'+
+      '<td class="td-primary" data-label="Name" style="cursor:pointer" onclick="location.hash=\'#cc-loan-detail/'+c.id+'\'">'+ccEsc(c.name)+'</td>'+
+      '<td data-label="Bank"><span style="font-size:11px;padding:3px 8px;border-radius:12px;background:var(--surface-3);color:var(--text-secondary)">'+ccEsc(c.bank)+'</span>'+(c.cardLast4?'<div style="font-family:monospace;font-size:11px;color:var(--text-muted);margin-top:4px;white-space:nowrap">•••• '+ccEsc(c.cardLast4)+'</div>':'')+'</td>'+
+      '<td data-label="Item">'+(ccEsc(c.item)||'—')+'</td>'+
+      '<td class="td-amount" data-label="Monthly">'+fmt(c.monthly)+'</td>'+
+      '<td data-label="Paid"><div style="font-weight:700">'+pr.month+'/'+c.months+'</div><div class="progress-bar-wrap" style="height:4px;margin-top:4px;min-width:60px"><div class="progress-bar-fill" style="width:'+pct.toFixed(1)+'%"></div></div></td>'+
+      '<td data-label="Remaining" style="color:'+(out>0?'var(--danger)':'var(--success)')+';font-weight:700">'+fmt(out)+'</td>'+
+      '<td data-label="Next Due">'+(nd&&st!=='closed'?fmtDate(nd):'—')+'</td>'+
+      '<td data-label="Status">'+badgeHTML(st)+'</td>'+
+      '<td data-label="Actions"><div class="td-actions">'+
+        '<button class="icon-btn icon-btn-view" title="View" onclick="location.hash=\'#cc-loan-detail/'+c.id+'\'">👁</button>'+
+        '<button class="icon-btn icon-btn-pay" title="Record Payment" onclick="openCCPayModal(\''+c.id+'\')" '+(st==='closed'||st==='paid'?'disabled':'')+'>$</button>'+
+        '<button class="icon-btn icon-btn-delete" title="Delete" onclick="delCCLoan(\''+c.id+'\')">✕</button>'+
+      '</div></td></tr>';
+  });
+  tb.innerHTML=rows;
+}
+
+// Add (no id) or edit (id) an installment plan
+function openCCModal(id){
+  var c=id?ccLoans.find(function(x){ return x.id===id; }):null;
+  var v=c||{name:'',bank:'',cardLast4:'',item:'',monthly:'',months:12,startDate:today(),notes:''};
+  var known=false;
+  var bankOpts=Object.keys(CC_BANKS).map(function(g){
+    return '<optgroup label="'+g+'">'+CC_BANKS[g].map(function(b){ if(b===v.bank) known=true; return '<option'+(b===v.bank?' selected':'')+'>'+b+'</option>'; }).join('')+'</optgroup>';
+  }).join('');
+  var isOther=!!v.bank&&!known;
+  openModal(c?'Edit Installment':'New Credit Card Installment',
+    '<div class="form-grid">'+
+    '<div class="form-group full-width"><label>Cardholder / Name *</label><input class="form-control" id="ccName" value="'+ccEsc(v.name)+'" placeholder="e.g. Juan Dela Cruz"></div>'+
+    '<div class="form-group"><label>Bank / Provider *</label><select class="form-control" id="ccBank" onchange="ccToggleOther()"><option value="">— Select —</option>'+bankOpts+'<option value="__other"'+(isOther?' selected':'')+'>Other…</option></select></div>'+
+    '<div class="form-group" id="ccBankOtherWrap" style="'+(isOther?'':'display:none')+'"><label>Other Bank / Provider *</label><input class="form-control" id="ccBankOther" value="'+(isOther?ccEsc(v.bank):'')+'" placeholder="Provider name"></div>'+
+    '<div class="form-group"><label>Card Last 4 Digits</label><input class="form-control" id="ccLast4" maxlength="4" inputmode="numeric" value="'+ccEsc(v.cardLast4)+'" placeholder="1234"></div>'+
+    '<div class="form-group full-width"><label>Item / Purpose</label><input class="form-control" id="ccItem" value="'+ccEsc(v.item)+'" placeholder="e.g. iPhone 16, Laptop, Balance Conversion"></div>'+
+    '<div class="form-group"><label>Monthly Payment (PHP) *</label><input class="form-control" id="ccMonthly" type="number" min="1" step="0.01" value="'+v.monthly+'" placeholder="1000" oninput="ccUpdatePreview()"></div>'+
+    '<div class="form-group"><label>Months to Pay *</label><input class="form-control" id="ccMonths" type="number" min="1" value="'+v.months+'" placeholder="12" oninput="ccUpdatePreview()"></div>'+
+    '<div class="form-group"><label>First Due Date</label><input class="form-control" id="ccStart" type="date" value="'+v.startDate+'" oninput="ccUpdatePreview()"></div>'+
+    '<div class="form-group full-width"><label>Notes</label><textarea class="form-control" id="ccNotes" rows="2">'+ccEsc(v.notes)+'</textarea></div>'+
+    '</div>'+
+    '<div id="ccPrevBox" style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:12px;color:var(--text-secondary);display:none"></div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitCCLoan('+(c?'\''+c.id+'\'':'')+')">'+(c?'Save':'Create')+'</button>'
+  );
+  ccUpdatePreview();
+}
+function ccToggleOther(){
+  var w=document.getElementById('ccBankOtherWrap');
+  if(w) w.style.display=document.getElementById('ccBank').value==='__other'?'':'none';
+}
+function ccUpdatePreview(){
+  var m=parseFloat((document.getElementById('ccMonthly')||{}).value)||0;
+  var n=parseInt((document.getElementById('ccMonths')||{}).value)||0;
+  var sd=(document.getElementById('ccStart')||{}).value;
+  var box=document.getElementById('ccPrevBox'); if(!box) return;
+  if(!m||!n){ box.style.display='none'; return; }
+  box.style.display='block';
+  box.innerHTML='<strong style="color:var(--primary)">Preview:</strong> '+fmt(m)+' × '+n+' months = <strong style="color:var(--primary)">'+fmt(m*n)+'</strong>'+(sd?' | Last payment: <strong>'+fmtDate(addMonthsISO(sd,n-1))+'</strong>':'');
+}
+function submitCCLoan(id){
+  var name=((document.getElementById('ccName')||{}).value||'').trim();
+  var bank=(document.getElementById('ccBank')||{}).value||'';
+  if(bank==='__other') bank=((document.getElementById('ccBankOther')||{}).value||'').trim();
+  var last4=((document.getElementById('ccLast4')||{}).value||'').trim();
+  var m=Math.round((parseFloat((document.getElementById('ccMonthly')||{}).value)||0)*100)/100;
+  var n=parseInt((document.getElementById('ccMonths')||{}).value)||0;
+  var sd=(document.getElementById('ccStart')||{}).value||today();
+  if(!name){ toast('Enter the cardholder name.','error'); return; }
+  if(!bank){ toast('Select a bank or provider.','error'); return; }
+  if(last4&&!/^\d{4}$/.test(last4)){ toast('Card last 4 digits must be 4 numbers.','error'); return; }
+  if(!(m>0)){ toast('Enter a valid monthly payment.','error'); return; }
+  if(!(n>=1)){ toast('Enter the number of months to pay.','error'); return; }
+  var fields={name:name,bank:bank,cardLast4:last4,item:((document.getElementById('ccItem')||{}).value||'').trim(),
+    monthly:m,months:n,startDate:sd,notes:((document.getElementById('ccNotes')||{}).value||'').trim()};
+  var c=id?ccLoans.find(function(x){ return x.id===id; }):null;
+  if(c){ Object.assign(c,fields); }
+  else {
+    c=Object.assign({id:uid(),status:'active',createdAt:new Date().toISOString()},fields);
+    ccLoans.push(c);
+    logActivity('loan','Credit card installment added: '+name+' · '+bank+' · '+fmt(m)+' × '+n);
+  }
+  save(); closeModal();
+  toast(id?'Installment updated!':'Installment created!');
+  ccGo(id?'#cc-loan-detail/'+id:'#cc-loans');
+}
+
+function delCCLoan(id){
+  var c=ccLoans.find(function(x){ return x.id===id; }); if(!c) return;
+  openModal('Delete Installment','<p style="color:var(--text-secondary)">Delete <strong>'+ccEsc(c.name)+' · '+ccEsc(c.bank)+'</strong>? All its payments will also be removed.</p>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-danger" onclick="confirmDelCCLoan(\''+id+'\')">Delete</button>');
+}
+function confirmDelCCLoan(id){
+  ccLoans=ccLoans.filter(function(x){ return x.id!==id; });
+  ccPayments=ccPayments.filter(function(x){ return x.ccId!==id; });
+  save(); closeModal(); toast('Installment deleted.','info');
+  ccGo('#cc-loans');
+}
+function closeCCLoan(id){
+  var c=ccLoans.find(function(x){ return x.id===id; }); if(!c) return;
+  c.status=c.status==='closed'?'active':'closed';
+  save(); toast(c.status==='closed'?'Installment closed.':'Installment reopened.','info');
+  ccGo('#cc-loan-detail/'+id);
+}
+
+register('cc-loan-detail',function(page,area){
+  var id=page.split('/')[1];
+  var c=ccLoans.find(function(x){ return x.id===id; });
+  if(!c){ area.innerHTML='<div class="empty-state"><div class="empty-icon">❌</div><div class="empty-title">Installment not found</div><button class="btn btn-secondary" onclick="location.hash=\'#cc-loans\'">Back</button></div>'; return; }
+  var st=ccStatus(c), pr=ccProgress(c), paid=ccPaid(c), out=ccOutstanding(c), total=ccTotal(c), todayISO=isoLocal(new Date());
+  var pct=Math.min(100,paid/total*100);
+  var lPay=ccPayments.filter(function(p){ return p.ccId===id; }).sort(function(a,b){ return b.date.localeCompare(a.date); });
+
+  var srows='';
+  for(var k=1;k<=c.months;k++){
+    var due=addMonthsISO(c.startDate,k-1);
+    var amt=k===c.months?Math.round((total-c.monthly*(c.months-1))*100)/100:c.monthly;
+    var badge;
+    if(k<=pr.month) badge='<span class="badge badge-paid">paid</span>';
+    else if(k===pr.month+1&&pr.advance>0) badge='<span class="badge badge-pending">'+fmt(pr.advance)+' paid</span>';
+    else if(st!=='closed'&&due<todayISO) badge='<span class="badge badge-overdue">overdue</span>';
+    else badge='<span class="badge badge-closed">upcoming</span>';
+    srows+='<tr><td data-label="#">'+k+'/'+c.months+'</td><td data-label="Due Date">'+fmtDate(due)+'</td><td data-label="Amount">'+fmt(amt)+'</td><td data-label="Status">'+badge+'</td></tr>';
+  }
+  var prows='';
+  if(!lPay.length) prows='<tr><td colspan="5"><div class="empty-state" style="padding:30px"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>';
+  else lPay.forEach(function(p){
+    var pm=paymentMonth(ccPayments,p,'ccId',c.monthly,c.months,total);
+    prows+='<tr><td data-label="Date">'+fmtDate(p.date)+'</td><td class="td-amount" data-label="Amount">'+fmt(p.amount)+'</td><td data-label="Installment" style="font-weight:700">'+pm.month+'/'+c.months+'</td><td data-label="Channel" style="color:var(--text-muted);font-size:12px">'+ccEsc(p.channel||'—')+(p.refNo?'<br>Ref '+ccEsc(p.refNo):'')+'</td><td data-label="Actions"><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadCCReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" title="Delete" onclick="delCCPayment(\''+p.id+'\',\''+c.id+'\')">✕</button></div></td></tr>';
+  });
+
+  function row(k,v){ return '<div class="detail-row"><span class="detail-key">'+k+'</span><span class="detail-val">'+v+'</span></div>'; }
+  var html='<div class="page"><div class="page-header">';
+  html+='<div class="page-header-info"><h1 class="page-title">'+ccEsc(c.name)+'</h1><p class="page-subtitle">'+ccEsc(c.bank)+(c.cardLast4?' · •••• '+ccEsc(c.cardLast4):'')+(c.item?' · '+ccEsc(c.item):'')+'</p></div>';
+  html+='<div class="page-actions">';
+  html+='<button class="btn btn-secondary" onclick="location.hash=\'#cc-loans\'">← Back</button>';
+  html+='<button class="btn btn-secondary" onclick="openCCModal(\''+c.id+'\')">✎ Edit</button>';
+  if(st!=='paid'&&st!=='closed') html+='<button class="btn btn-primary" onclick="openCCPayModal(\''+c.id+'\')">Record Payment</button>';
+  if(st!=='paid') html+='<button class="btn btn-secondary" onclick="closeCCLoan(\''+c.id+'\')">'+(st==='closed'?'Reopen':'Close')+'</button>';
+  html+='</div></div>';
+
+  html+='<div class="loan-detail-grid"><div style="display:flex;flex-direction:column;gap:20px">';
+  html+='<div class="card"><div class="form-section-title">Account Summary</div>';
+  html+=row('Cardholder',ccEsc(c.name))+row('Bank / Provider',ccEsc(c.bank));
+  if(c.cardLast4) html+=row('Card No.','•••• '+ccEsc(c.cardLast4));
+  if(c.item) html+=row('Item / Purpose',ccEsc(c.item));
+  html+=row('Monthly Payment',fmt(c.monthly))+row('Months to Pay',c.months+' months')+row('Total Amount',fmt(total));
+  html+=row('First Due',fmtDate(c.startDate))+row('Last Due',fmtDate(addMonthsISO(c.startDate,c.months-1)))+row('Status',badgeHTML(st));
+  if(c.notes) html+='<div class="detail-row"><span class="detail-key">Notes</span><span class="detail-val" style="font-size:12px;max-width:55%;text-align:right">'+ccEsc(c.notes)+'</span></div>';
+  html+='</div>';
+  html+='<div class="table-container"><div class="table-header"><span class="table-title">Installment Schedule</span></div>';
+  html+='<div style="max-height:360px;overflow-y:auto"><table><thead><tr><th>#</th><th>Due Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>'+srows+'</tbody></table></div></div>';
+  html+='</div>';
+
+  html+='<div style="display:flex;flex-direction:column;gap:20px">';
+  html+='<div class="card"><div class="form-section-title">Repayment Progress</div>';
+  html+='<div style="font-size:28px;font-weight:800;color:var(--primary)">'+pr.month+'/'+c.months+' <span style="font-size:13px;font-weight:500;color:var(--text-muted)">installments paid</span></div>';
+  html+='<div style="font-size:13px;color:var(--text-secondary);margin:6px 0">'+fmt(paid)+' paid of '+fmt(total)+'</div>';
+  html+='<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:'+pct.toFixed(1)+'%"></div></div>';
+  html+='<hr class="form-divider">';
+  html+=row('Amount Paid','<span style="color:var(--success)">'+fmt(paid)+'</span>');
+  html+=row('Remaining','<span style="color:'+(out>0?'var(--danger)':'var(--success)')+'">'+fmt(out)+'</span>');
+  if(st==='active'||st==='overdue') html+=row('Next Due',fmtDate(ccNextDue(c))+(pr.advance>0?' <span style="font-size:11px;color:var(--text-muted)">('+fmt(pr.remainder)+' left)</span>':''));
+  html+='</div>';
+  html+='<div class="table-container"><div class="table-header"><span class="table-title">Payment History</span></div>';
+  html+='<div style="max-height:320px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Amount</th><th>Installment</th><th>Channel</th><th></th></tr></thead><tbody>'+prows+'</tbody></table></div></div>';
+  html+='</div></div></div>';
+  area.innerHTML=html;
+});
+
+function openCCPayModal(id){
+  var c=ccLoans.find(function(x){ return x.id===id; }); if(!c) return;
+  var pr=ccProgress(c), out=ccOutstanding(c);
+  // Pre-fill what's left of the current installment (the full monthly amount unless an advance was paid)
+  var suggest=Math.min(out,pr.advance>0?pr.remainder:(pr.month+1===c.months?out:c.monthly));
+  var chOpts=CC_CHANNELS.map(function(ch){ return '<option>'+ch+'</option>'; }).join('');
+  openModal('Record Payment',
+    '<div class="form-grid col-1" style="gap:14px">'+
+    '<div class="detail-row"><span class="detail-key">Account</span><span class="detail-val">'+ccEsc(c.name)+' · '+ccEsc(c.bank)+'</span></div>'+
+    '<div class="detail-row"><span class="detail-key">Paying Installment</span><span class="detail-val" style="font-weight:700">'+(pr.month+1)+'/'+c.months+'</span></div>'+
+    '<div class="detail-row"><span class="detail-key">Remaining Balance</span><span class="detail-val" style="color:var(--danger)">'+fmt(out)+'</span></div>'+
+    '<div class="form-group"><label>Amount (PHP) *</label><input class="form-control" id="ccpAmt" type="number" min="1" step="0.01" value="'+suggest.toFixed(2)+'"></div>'+
+    '<div class="form-group"><label>Payment Date</label><input class="form-control" id="ccpDate" type="date" value="'+today()+'"></div>'+
+    '<div class="form-group"><label>Payment Channel</label><select class="form-control" id="ccpChannel">'+chOpts+'</select></div>'+
+    '<div class="form-group"><label>Reference No.</label><input class="form-control" id="ccpRef" placeholder="Reference no. from your bank or app (optional)"></div></div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitCCPay(\''+id+'\')">Record &amp; Download Receipt</button>'
+  );
+}
+function submitCCPay(id){
+  var c=ccLoans.find(function(x){ return x.id===id; }); if(!c) return;
+  var amt=Math.round((parseFloat((document.getElementById('ccpAmt')||{}).value)||0)*100)/100;
+  if(!(amt>0)){ toast('Enter a valid amount.','error'); return; }
+  var out=ccOutstanding(c);
+  if(amt>out+0.005){ toast('Amount exceeds the remaining balance of '+fmt(out)+'.','error'); return; }
+  var pid=uid();
+  ccPayments.push({id:pid,ccId:id,amount:amt,date:(document.getElementById('ccpDate')||{}).value||today(),
+    channel:(document.getElementById('ccpChannel')||{}).value||'',refNo:((document.getElementById('ccpRef')||{}).value||'').trim(),
+    createdAt:new Date().toISOString()});
+  logActivity('payment','Credit card payment of '+fmt(amt)+' recorded for '+c.name+' · '+c.bank);
+  save(); closeModal();
+  toast(fmt(amt)+' payment recorded!');
+  setTimeout(function(){ downloadCCReceipt(pid); },700);
+  ccGo('#cc-loan-detail/'+id);
+}
+function delCCPayment(pid,id){
+  ccPayments=ccPayments.filter(function(x){ return x.id!==pid; });
+  save(); toast('Payment removed.','info');
+  ccGo('#cc-loan-detail/'+id);
+}
+
+// ── Credit Card Receipt (Image) ────────────────────────────
+// Hiramo-branded payment record. It names the bank as a detail but deliberately doesn't copy any bank's
+// own receipt design, and is labelled as not an official bank receipt
+function downloadCCReceipt(pid){
+  var p=ccPayments.find(function(x){ return x.id===pid; }); if(!p) return;
+  var c=ccLoans.find(function(x){ return x.id===p.ccId; }); if(!c) return;
+  var total=ccTotal(c);
+  var pm=paymentMonth(ccPayments,p,'ccId',c.monthly,c.months,total);
+  // Balance as of this payment, not today, so re-downloading an old receipt shows the same figures
+  var mine=ccPayments.filter(function(x){ return x.ccId===c.id; }).map(function(x,i){ return {x:x,i:i}; });
+  mine.sort(function(a,b){ return a.x.date<b.x.date?-1:a.x.date>b.x.date?1:a.i-b.i; });
+  var paidTo=0; for(var k=0;k<mine.length;k++){ paidTo+=mine[k].x.amount; if(mine[k].x.id===p.id) break; }
+  var remaining=Math.max(0,Math.round((total-paidTo)*100)/100);
+  var done=remaining<=0.005;
+
+  var rows=[['Cardholder Name',c.name,true],['Bank / Provider',c.bank,true]];
+  if(c.cardLast4) rows.push(['Card Number','•••• •••• •••• '+c.cardLast4]);
+  if(c.item) rows.push(['Item / Purpose',c.item]);
+  rows.push(null);
+  rows.push(['Amount Paid',fmt(p.amount),true]);
+  rows.push(['Payment Date',fmtDate(p.date)]);
+  if(p.channel) rows.push(['Payment Channel',p.channel]);
+  rows.push(['Reference No.',p.refNo||p.id.slice(-8).toUpperCase(),false,true]);
+  rows.push(null);
+  var extra=pm.advance>0?2:0;
+  var W=420, rh=34, cardTop=235;
+  var H=cardTop+60+rows.length*rh+(3+extra)*rh+90+20;
+  var canvas=document.createElement('canvas'), ctx=canvas.getContext('2d');
+  var dpr=window.devicePixelRatio||2;
+  canvas.width=W*dpr; canvas.height=H*dpr; ctx.scale(dpr,dpr);
+  var F='"Inter", "Segoe UI", sans-serif', ACC='#4f46e5';
+
+  ctx.fillStyle='#f0f2f5'; ctx.fillRect(0,0,W,H);
+  var headerH=220, hGrad=ctx.createLinearGradient(0,0,W,headerH);
+  hGrad.addColorStop(0,'#6366f1'); hGrad.addColorStop(1,'#4338ca');
+  ctx.fillStyle=hGrad;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(W,0); ctx.lineTo(W,headerH-25);
+  ctx.quadraticCurveTo(W,headerH,W-25,headerH); ctx.lineTo(25,headerH);
+  ctx.quadraticCurveTo(0,headerH,0,headerH-25); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha=0.06; ctx.fillStyle='#ffffff';
+  ctx.beginPath(); ctx.arc(60,40,80,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(360,180,100,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1.0;
+
+  var cx=W/2, cy=60;
+  ctx.beginPath(); ctx.arc(cx,cy,30,0,Math.PI*2); ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy,24,0,Math.PI*2); ctx.fillStyle='#ffffff'; ctx.fill();
+  ctx.strokeStyle=ACC; ctx.lineWidth=4; ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath(); ctx.moveTo(cx-10,cy+1); ctx.lineTo(cx-3,cy+9); ctx.lineTo(cx+12,cy-8); ctx.stroke();
+  ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.font='600 17px '+F;
+  ctx.fillText('Payment Successful',cx,cy+55);
+  ctx.font='bold 40px '+F; ctx.fillText(fmt(p.amount),cx,cy+102);
+  ctx.font='400 13px '+F; ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.fillText(c.bank+' · Installment '+pm.month+'/'+c.months,cx,cy+128);
+  ctx.font='300 12px '+F; ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.fillText(new Date(p.date).toLocaleDateString('en-PH',{weekday:'short',year:'numeric',month:'long',day:'numeric'}),cx,cy+148);
+
+  var cardX=20, cardY=cardTop, cardW=W-40, cardH=H-cardY-70, r=16;
+  ctx.shadowColor='rgba(0,0,0,0.08)'; ctx.shadowBlur=15; ctx.shadowOffsetY=4; ctx.fillStyle='#ffffff';
+  ctx.beginPath(); ctx.moveTo(cardX+r,cardY); ctx.lineTo(cardX+cardW-r,cardY);
+  ctx.quadraticCurveTo(cardX+cardW,cardY,cardX+cardW,cardY+r); ctx.lineTo(cardX+cardW,cardY+cardH-r);
+  ctx.quadraticCurveTo(cardX+cardW,cardY+cardH,cardX+cardW-r,cardY+cardH); ctx.lineTo(cardX+r,cardY+cardH);
+  ctx.quadraticCurveTo(cardX,cardY+cardH,cardX,cardY+cardH-r); ctx.lineTo(cardX,cardY+r);
+  ctx.quadraticCurveTo(cardX,cardY,cardX+r,cardY); ctx.closePath(); ctx.fill();
+  ctx.shadowColor='transparent'; ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+
+  var dx=cardX+24, rightX=cardX+cardW-24, dy=cardY+30;
+  ctx.textAlign='left'; ctx.fillStyle=ACC; ctx.font='700 11px '+F; ctx.fillText('TRANSACTION DETAILS',dx,dy);
+  dy+=12; ctx.strokeStyle='#e8ecf1'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(dx,dy); ctx.lineTo(rightX,dy); ctx.stroke();
+  dy+=4;
+  function fit(text,maxW){ text=String(text); if(ctx.measureText(text).width<=maxW) return text; while(text.length>1&&ctx.measureText(text+'…').width>maxW) text=text.slice(0,-1); return text+'…'; }
+  function drawRow(label,value,bold,hl,big){
+    dy+=rh; ctx.textAlign='left'; ctx.fillStyle='#6b7280'; ctx.font='400 12px '+F; ctx.fillText(label,dx,dy);
+    ctx.textAlign='right'; ctx.fillStyle=hl||'#1f2937'; ctx.font=(bold?'bold ':'500 ')+(big||13)+'px '+F;
+    ctx.fillText(fit(value,cardW-48-ctx.measureText(label).width-30),rightX,dy);
+  }
+  function divider(){ dy+=16; ctx.setLineDash([3,3]); ctx.strokeStyle='#d1d5db'; ctx.beginPath(); ctx.moveTo(dx,dy); ctx.lineTo(rightX,dy); ctx.stroke(); ctx.setLineDash([]); }
+  rows.forEach(function(rw){ if(!rw) divider(); else drawRow(rw[0],rw[1],rw[2],rw[3]?ACC:null); });
+
+  drawRow('Installment Paid',pm.month+'/'+c.months,true,done?'#16a34a':ACC,16);
+  if(pm.advance>0){
+    drawRow(pm.month>0?'Advance':'Partial Payment',fmt(pm.advance),true);
+    drawRow('Remaining for '+pm.nextMonth+'/'+c.months,fmt(pm.remainder),true,ACC);
+  }
+  drawRow('Remaining Balance',fmt(remaining),true,done?'#16a34a':'#ef4444');
+  drawRow(done?'Status':'Next Due Date',done?'FULLY PAID':fmtDate(addMonthsISO(c.startDate,pm.month)),true,done?'#16a34a':null);
+
+  // Installment progress dots (up to 36; longer plans get a bar)
+  dy+=30;
+  if(c.months<=36){
+    var gap=Math.min(22,(cardW-48)/c.months), rad=Math.min(6,gap/2-1.5), sx=cx-gap*(c.months-1)/2;
+    for(var i=0;i<c.months;i++){ ctx.beginPath(); ctx.arc(sx+i*gap,dy,rad,0,Math.PI*2); ctx.fillStyle=i<pm.month?ACC:'#e5e7eb'; ctx.fill(); }
+  } else {
+    ctx.fillStyle='#e5e7eb'; ctx.fillRect(dx,dy-4,cardW-48,8);
+    ctx.fillStyle=ACC; ctx.fillRect(dx,dy-4,(cardW-48)*pm.month/c.months,8);
+  }
+  dy+=24; ctx.textAlign='center'; ctx.fillStyle='#6b7280'; ctx.font='500 11px '+F;
+  ctx.fillText(pm.month+' of '+c.months+' installments paid · '+fmt(c.monthly)+'/month',cx,dy);
+
+  ctx.textAlign='center'; ctx.fillStyle='#9ca3af'; ctx.font='400 10px '+F;
+  ctx.fillText('Payment record generated by Hiramo · Loan Management System',W/2,H-38);
+  ctx.font='400 9px '+F; ctx.fillStyle='#b0b8c4';
+  ctx.fillText('For personal tracking only. Not an official receipt from '+fit(c.bank,140)+'.',W/2,H-22);
+
+  var link=document.createElement('a');
+  link.download='CC_Receipt_'+c.name.replace(/[^\w]+/g,'_')+'_'+pm.month+'of'+c.months+'_'+p.id.slice(-6).toUpperCase()+'.png';
   link.href=canvas.toDataURL('image/png',1.0);
   link.click();
 }
