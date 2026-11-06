@@ -19,7 +19,8 @@ var ccPayments   = DB.get('lp_cc_payments');
 var LENDER_NAME    = 'Loan System Inc.';
 var LENDER_PARTNER = 'Immanuel M. Mahusay';
 var storedSettings = localStorage.getItem('lp_settings');
-var settings = { emailjs_service: 'default_service', emailjs_template: 'template_53kpkj7', emailjs_public_key: 'QsV4vGpnW4fLkBGMU', auto_send: true };
+var settings = { emailjs_service: 'default_service', emailjs_template: 'template_53kpkj7', emailjs_public_key: 'QsV4vGpnW4fLkBGMU', auto_send: true,
+  penalty_enabled: true, penalty_type: 'percent', penalty_rate: 5, penalty_grace_days: 0 };
 
 if (storedSettings) {
   try {
@@ -163,15 +164,61 @@ function calcLoan(principal,rate,term,type){
   return {totalInterest:totalInterest,monthlyPayment:monthlyPayment,totalAmount:principal+totalInterest,schedule:schedule};
 }
 
+// Installment payments only; penalty payments (kind:'penalty') are tracked separately
 function loanPaid(loan){
-  return payments.filter(function(p){ return p.loanId===loan.id; }).reduce(function(s,p){ return s+p.amount; },0);
+  return payments.filter(function(p){ return p.loanId===loan.id&&!isPenaltyPay(p); }).reduce(function(s,p){ return s+p.amount; },0);
 }
 function loanOutstanding(loan){
   return Math.max(0,loan.totalAmount-loanPaid(loan));
 }
+
+// ── Late Payment Penalty ──────────────────────────────────
+// Every installment still unpaid a full week after its due date (plus grace days) is charged a penalty,
+// and again each further week it stays unpaid: a % of the amount still unpaid that week, or a fixed amount.
+// Charges are rebuilt from payment history, so a late payment stops new charges but keeps the ones already
+// incurred. Penalties are paid (or waived) separately and never reduce the installment balance
+function isPenaltyPay(p){ return p.kind==='penalty'; }
+function penaltyCfg(){
+  return { enabled:settings.penalty_enabled!==false, type:settings.penalty_type==='fixed'?'fixed':'percent',
+    rate:+settings.penalty_rate||0, grace:Math.max(0,parseInt(settings.penalty_grace_days)||0) };
+}
+function addDaysISO(iso,n){ var sp=iso.split('-'); return isoLocal(new Date(+sp[0],+sp[1]-1,+sp[2]+n)); }
+function loanPenaltyCharges(loan){
+  var cfg=penaltyCfg();
+  if(!cfg.enabled||!(cfg.rate>0)||!loan.startDate||!loan.term||!(loan.monthlyPayment>0)) return [];
+  function r2(x){ return Math.round(x*100)/100; }
+  var term=+loan.term, mp=loan.monthlyPayment, total=r2(loan.totalAmount);
+  var stopISO=isoLocal(new Date());
+  if(loan.status==='closed'&&loan.closedAt&&loan.closedAt<stopISO) stopISO=loan.closedAt;
+  var pays=payments.filter(function(p){ return p.loanId===loan.id&&!isPenaltyPay(p); });
+  function paidBy(iso){ return r2(pays.reduce(function(s,p){ return p.date<=iso?s+p.amount:s; },0)); }
+  var out=[], prevDue=0;
+  for(var period=1;period<=term;period++){
+    var due=period===term?total:r2(mp*period), inst=r2(due-prevDue);
+    prevDue=due;
+    var dueISO=addMonthsISO(loan.startDate,period);
+    for(var w=1;;w++){
+      var at=addDaysISO(dueISO,cfg.grace+7*w);
+      if(at>stopISO) break;
+      var unpaid=Math.min(inst,r2(due-paidBy(at)));
+      if(unpaid<=0.01*period) break; // installment covered; payments only add up, so later weeks are too
+      out.push({period:period,week:w,date:at,unpaid:unpaid,amount:r2(cfg.type==='fixed'?cfg.rate:unpaid*cfg.rate/100)});
+    }
+  }
+  return out;
+}
+function loanPenaltyAccrued(loan){ return Math.round(loanPenaltyCharges(loan).reduce(function(s,c){ return s+c.amount; },0)*100)/100; }
+function loanPenaltyPaid(loan){ return payments.filter(function(p){ return p.loanId===loan.id&&isPenaltyPay(p); }).reduce(function(s,p){ return s+p.amount; },0); }
+function loanPenaltyDue(loan){ return Math.max(0,Math.round((loanPenaltyAccrued(loan)-loanPenaltyPaid(loan)-(+loan.penaltyWaived||0))*100)/100); }
+function penaltyRuleText(){
+  var c=penaltyCfg();
+  if(!c.enabled||!(c.rate>0)) return 'No late payment penalty is applied.';
+  return (c.type==='fixed'?fmt(c.rate)+' per installment':c.rate+'% of the unpaid installment')+' for every full week it remains unpaid'+(c.grace?' after a '+c.grace+'-day grace period':'');
+}
+
 function loanStatus(loan){
   if(loan.status==='closed') return 'closed';
-  if(loanOutstanding(loan)<=0) return 'paid';
+  if(loanOutstanding(loan)<=0) return loanPenaltyDue(loan)>0.005?'overdue':'paid';
   if(loan.dueDate && new Date(loan.dueDate)<new Date()) return 'overdue';
   return loan.status||'active';
 }
@@ -270,7 +317,7 @@ document.getElementById('sidebarOverlay').addEventListener('click', function() {
 register('dashboard',function(_,area){
   var totLoaned=loans.reduce(function(s,l){ return s+l.principal; },0);
   var totOut=loans.reduce(function(s,l){ return s+loanOutstanding(l); },0);
-  var totColl=loans.reduce(function(s,l){ return s+loanPaid(l); },0);
+  var totColl=loans.reduce(function(s,l){ return s+loanPaid(l)+loanPenaltyPaid(l); },0);
   var actCnt=loans.filter(function(l){ return loanStatus(l)==='active'; }).length;
   var ovCnt=loans.filter(function(l){ return loanStatus(l)==='overdue'; }).length;
 
@@ -624,19 +671,21 @@ function renderLT(){
   tb.innerHTML='';
   fl.forEach(function(l){
     var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
-    var out=loanOutstanding(l), st=loanStatus(l);
+    var out=loanOutstanding(l), st=loanStatus(l), pen=loanPenaltyDue(l);
     tb.innerHTML+='<tr>'+
       '<td data-label="ID" style="font-family:monospace;font-size:11px;color:var(--text-muted)">'+l.id.slice(-6).toUpperCase()+'</td>'+
       '<td class="td-primary" data-label="Borrower">'+(b?b.name:'—')+'</td>'+
       '<td class="td-amount" data-label="Principal">'+fmt(l.principal)+'</td>'+
       '<td data-label="Monthly">'+fmt(l.monthlyPayment)+'</td>'+
-      '<td data-label="Outstanding" style="color:'+(out>0?'var(--danger)':'var(--success)')+';font-weight:700">'+fmt(out)+'</td>'+
+      '<td class="td-stack" data-label="Outstanding" style="color:'+(out>0?'var(--danger)':'var(--success)')+';font-weight:700">'+fmt(out)+
+        (pen>0?'<div style="font-size:11px;font-weight:600;color:var(--warning)">+ '+fmt(pen)+' penalty</div>':'')+'</td>'+
       '<td data-label="Due Date">'+fmtDate(l.dueDate)+'</td>'+
       '<td data-label="Status">'+badgeHTML(st)+'</td>'+
       '<td data-label="Actions"><div class="td-actions">'+
         '<button class="icon-btn icon-btn-view" title="View" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
         '<button class="icon-btn icon-btn-edit" title="Edit" onclick="editLoan(\''+l.id+'\')">✎</button>'+
         '<button class="icon-btn icon-btn-pay" title="Pay" onclick="openPayModal(\''+l.id+'\')">$</button>'+
+        (hasOverdueNotice(l)?'<button class="icon-btn icon-btn-delete" title="Generate Overdue Notice" onclick="generateOverdueNotice(\''+l.id+'\')">⚠</button>':'')+
         '<button class="icon-btn icon-btn-delete" title="Delete" onclick="delLoan(\''+l.id+'\')">✕</button>'+
       '</div></td></tr>';
   });
@@ -689,7 +738,9 @@ function saveEditLoan(id){
   l.principal=p; l.rate=r; l.term=t; l.type=tp; l.startDate=sd;
   l.dueDate=due.toISOString().split('T')[0];
   l.purpose=document.getElementById('elPurp').value;
-  l.status=document.getElementById('elStat').value;
+  var newStat=document.getElementById('elStat').value;
+  if(newStat==='closed'&&l.status!=='closed') l.closedAt=isoLocal(new Date());
+  l.status=newStat;
   l.notes=document.getElementById('elNotes').value.trim();
   l.totalInterest=c.totalInterest; l.monthlyPayment=c.monthlyPayment;
   l.totalAmount=c.totalAmount; l.schedule=c.schedule;
@@ -708,7 +759,7 @@ register('loan-detail',function(page,area){
 
   var srows=''; (loan.schedule||[]).forEach(function(r){ srows+='<tr><td data-label="#">'+r.period+'</td><td data-label="Payment">'+fmt(r.payment)+'</td><td data-label="Principal">'+fmt(r.principal)+'</td><td data-label="Interest">'+fmt(r.interest)+'</td><td data-label="Balance" style="color:var(--primary)">'+fmt(r.balance)+'</td></tr>'; });
   var prows=''; if(!lPay.length){ prows='<tr><td colspan="4"><div class="empty-state" style="padding:30px"><div class="empty-icon">💳</div><div class="empty-title">No payments yet</div></div></td></tr>'; }
-  else { lPay.forEach(function(p){ prows+='<tr><td data-label="Date">'+fmtDate(p.date)+'</td><td class="td-amount" data-label="Amount">'+fmt(p.amount)+'</td><td data-label="Note" style="color:var(--text-muted);font-size:12px">'+(p.note||'—')+'</td><td data-label="Actions"><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></div></td></tr>'; }); }
+  else { lPay.forEach(function(p){ prows+='<tr><td data-label="Date">'+fmtDate(p.date)+'</td><td class="td-amount" data-label="Amount">'+fmt(p.amount)+'</td><td data-label="Note" style="color:var(--text-muted);font-size:12px">'+(isPenaltyPay(p)?'<span class="badge badge-pending">penalty</span> ':'')+(p.note||(isPenaltyPay(p)?'':'—'))+'</td><td data-label="Actions"><div class="td-actions"><button class="icon-btn icon-btn-receipt" title="Download Receipt" onclick="downloadReceipt(\''+p.id+'\')">🧾</button><button class="icon-btn icon-btn-delete" onclick="delPayment(\''+p.id+'\',\''+loan.id+'\')">✕</button></div></td></tr>'; }); }
 
   // Co-maker detail rows
   var cmHTML = '';
@@ -729,6 +780,7 @@ register('loan-detail',function(page,area){
     '<button class="btn btn-secondary" onclick="editLoan(\''+loan.id+'\')">✎ Edit Loan</button>'+
     '<button class="btn btn-secondary" onclick="generatePDF(\''+loan.id+'\')">⬇️ Download PDF</button>'+
     '<button class="btn btn-secondary" onclick="sendLoanEmail(\''+loan.id+'\')">📧 Send Email</button>'+
+    (st!=='closed'&&hasOverdueNotice(loan)?'<button class="btn btn-danger" onclick="generateOverdueNotice(\''+loan.id+'\')">⚠️ Generate Notice</button>':'')+
     (st!=='paid'&&st!=='closed'?'<button class="btn btn-primary" onclick="openPayModal(\''+loan.id+'\')">Record Payment</button>':'')+
     (st!=='closed'?'<button class="btn btn-secondary" onclick="closeLoan(\''+loan.id+'\')">Close Loan</button>':'')+
     '</div></div>'+
@@ -763,6 +815,7 @@ register('loan-detail',function(page,area){
         '<div class="detail-row"><span class="detail-key">Outstanding</span><span class="detail-val" style="color:'+(out>0?'var(--danger)':'var(--success)')+'">'+fmt(out)+'</span></div>'+
         '<div class="detail-row"><span class="detail-key">Payments Made</span><span class="detail-val">'+lPay.length+'</span></div>'+
       '</div>'+
+      penaltyCardHTML(loan)+
       '<div class="table-container"><div class="table-header"><span class="table-title">Payment History</span></div>'+
         '<div style="max-height:300px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Amount</th><th>Note</th><th></th></tr></thead><tbody>'+prows+'</tbody></table></div></div>'+
     '</div></div></div>';
@@ -778,9 +831,48 @@ function closeLoan(id){
 }
 function confirmCloseLoan(id){
   var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
-  l.status='closed';
+  l.status='closed'; l.closedAt=isoLocal(new Date());
   save(); closeModal();
   toast('Loan closed.','info');
+  navigate('#loan-detail/'+id);
+}
+
+// Penalty summary + weekly charge list shown on Loan Detail (hidden when nothing was ever charged)
+function penaltyCardHTML(loan){
+  var charges=loanPenaltyCharges(loan);
+  if(!charges.length&&!loanPenaltyPaid(loan)) return '';
+  var acc=loanPenaltyAccrued(loan), pd=loanPenaltyPaid(loan), wv=+loan.penaltyWaived||0, due=loanPenaltyDue(loan);
+  var crows=charges.slice().reverse().map(function(c){
+    return '<tr><td data-label="Charged">'+fmtDate(c.date)+'</td><td data-label="Installment">#'+c.period+' · week '+c.week+'</td><td data-label="Unpaid">'+fmt(c.unpaid)+'</td><td class="td-amount" data-label="Penalty" style="color:var(--danger)">'+fmt(c.amount)+'</td></tr>';
+  }).join('');
+  var open=loan.status!=='closed'&&due>0;
+  return '<div class="card"><div class="form-section-title">Late Payment Penalty</div>'+
+    '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">'+penaltyRuleText()+'.</div>'+
+    '<div class="detail-row"><span class="detail-key">Total Charged</span><span class="detail-val">'+fmt(acc)+'</span></div>'+
+    '<div class="detail-row"><span class="detail-key">Penalty Paid</span><span class="detail-val" style="color:var(--success)">'+fmt(pd)+'</span></div>'+
+    (wv>0?'<div class="detail-row"><span class="detail-key">Waived</span><span class="detail-val">'+fmt(wv)+'</span></div>':'')+
+    '<div class="detail-row"><span class="detail-key">Penalty Due</span><span class="detail-val" style="color:'+(due>0?'var(--danger)':'var(--success)')+'">'+fmt(due)+'</span></div>'+
+    (open?'<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-primary" onclick="openPayModal(\''+loan.id+'\',\'penalty\')">Pay Penalty</button><button class="btn btn-secondary" onclick="waivePenalty(\''+loan.id+'\')">Waive</button></div>':'')+
+    (charges.length?'<div style="max-height:220px;overflow-y:auto;margin-top:12px"><table><thead><tr><th>Charged</th><th>Installment</th><th>Unpaid</th><th>Penalty</th></tr></thead><tbody>'+crows+'</tbody></table></div>':'')+
+    '</div>';
+}
+function waivePenalty(id){
+  var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
+  var due=loanPenaltyDue(l);
+  openModal('Waive Penalty',
+    '<div class="form-grid col-1" style="gap:14px">'+
+    '<div class="detail-row"><span class="detail-key">Penalty Due</span><span class="detail-val" style="color:var(--danger)">'+fmt(due)+'</span></div>'+
+    '<div class="form-group"><label>Amount to waive (PHP)</label><input class="form-control" id="wvAmt" type="number" min="0" step="0.01" value="'+due.toFixed(2)+'"></div></div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="confirmWaivePenalty(\''+id+'\')">Waive</button>');
+}
+function confirmWaivePenalty(id){
+  var l=loans.find(function(x){ return x.id===id; }); if(!l) return;
+  var amt=Math.min(parseFloat(document.getElementById('wvAmt').value)||0,loanPenaltyDue(l));
+  if(!(amt>0)){ toast('Enter a valid amount.','error'); return; }
+  var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
+  l.penaltyWaived=Math.round(((+l.penaltyWaived||0)+amt)*100)/100;
+  logActivity('payment','Penalty of '+fmt(amt)+' waived for '+(b?b.name:'loan'));
+  save(); closeModal(); toast(fmt(amt)+' penalty waived.','info');
   navigate('#loan-detail/'+id);
 }
 function delPayment(pid,lid){ payments=payments.filter(function(x){ return x.id!==pid; }); save(); toast('Payment removed.','info'); navigate('#loan-detail/'+lid); }
@@ -824,16 +916,23 @@ function refPayInfo(){
     '<hr class="form-divider"><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:'+Math.min(100,+pct)+'%"></div></div>'+
     '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">'+pct+'% repaid</div>';
 }
-function openPayModal(loanId){
+function openPayModal(loanId,kind){
   var loan=loans.find(function(x){ return x.id===loanId; }); if(!loan) return;
   var b=borrowers.find(function(x){ return x.id===loan.borrowerId; });
-  var out=loanOutstanding(loan);
-  openModal('Record Payment',
+  var out=loanOutstanding(loan), pen=loanPenaltyDue(loan);
+  if(kind!=='penalty'&&out<=0&&pen>0) kind='penalty';
+  var isPen=kind==='penalty';
+  openModal(isPen?'Pay Penalty':'Record Payment',
     '<div class="form-grid col-1" style="gap:14px">'+
     '<div class="detail-row"><span class="detail-key">Borrower</span><span class="detail-val">'+(b?b.name:'—')+'</span></div>'+
     '<div class="detail-row"><span class="detail-key">Outstanding</span><span class="detail-val" style="color:var(--danger)">'+fmt(out)+'</span></div>'+
-    '<div class="form-group"><label>Amount (PHP) *</label><input class="form-control" id="mpAmt" type="number" min="1" value="'+loan.monthlyPayment.toFixed(2)+'" oninput="updatePayPreview(\''+loanId+'\')"></div>'+
-    '<div class="form-group"><label>Show Advance &amp; Remaining on receipt?</label><div style="display:flex;gap:8px">'+
+    (pen>0?'<div class="detail-row"><span class="detail-key">Penalty Due</span><span class="detail-val" style="color:var(--danger)">'+fmt(pen)+'</span></div>'+
+      '<div class="form-group"><label>Apply payment to</label><select class="form-control" id="mpKind" onchange="openPayModal(\''+loanId+'\',this.value)">'+
+      (out>0?'<option value="installment"'+(isPen?'':' selected')+'>Installment</option>':'')+
+      '<option value="penalty"'+(isPen?' selected':'')+'>Late payment penalty</option></select></div>':'')+
+    '<div class="form-group"><label>Amount (PHP) *</label><input class="form-control" id="mpAmt" type="number" min="1" value="'+(isPen?pen:loan.monthlyPayment).toFixed(2)+'" oninput="updatePayPreview(\''+loanId+'\')"></div>'+
+    (isPen?'<div id="mpPenPreview"></div>':'')+
+    '<div class="form-group"'+(isPen?' style="display:none"':'')+'><label>Show Advance &amp; Remaining on receipt?</label><div style="display:flex;gap:8px">'+
       '<button type="button" class="btn btn-primary" id="mpAdvYes" onclick="setPayAdvance(\''+loanId+'\',true)">Yes</button>'+
       '<button type="button" class="btn btn-secondary" id="mpAdvNo" onclick="setPayAdvance(\''+loanId+'\',false)">No</button>'+
     '</div><input type="hidden" id="mpAdv" value="1"><div id="mpPreview" style="margin-top:10px"></div></div>'+
@@ -843,6 +942,8 @@ function openPayModal(loanId){
   );
   updatePayPreview(loanId);
 }
+// The penalty preview row only exists when the modal is in penalty mode
+function payModalKind(){ return document.getElementById('mpPenPreview')?'penalty':'installment'; }
 function setPayAdvance(loanId,show){
   document.getElementById('mpAdv').value=show?'1':'0';
   document.getElementById('mpAdvYes').className='btn '+(show?'btn-primary':'btn-secondary');
@@ -854,6 +955,8 @@ function updatePayPreview(loanId){
   var loan=loans.find(function(x){ return x.id===loanId; }), el=document.getElementById('mpPreview');
   if(!loan||!el) return;
   var amt=parseFloat(document.getElementById('mpAmt').value)||0;
+  var penEl=document.getElementById('mpPenPreview');
+  if(penEl){ penEl.innerHTML='<div class="detail-row"><span class="detail-key">Penalty remaining after this</span><span class="detail-val" style="color:var(--primary)">'+fmt(Math.max(0,loanPenaltyDue(loan)-amt))+'</span></div>'; return; }
   var pm=monthProgress(loanPaid(loan)+amt,loan.monthlyPayment,loan.term,loan.totalAmount);
   var html='<div class="detail-row"><span class="detail-key">Payment Month</span><span class="detail-val">'+pm.month+'/'+loan.term+'</span></div>';
   if(document.getElementById('mpAdv').value==='1'&&pm.advance>0){
@@ -865,7 +968,12 @@ function updatePayPreview(loanId){
 function submitModalPay(lid){
   var amt=parseFloat(document.getElementById('mpAmt').value);
   if(!amt||amt<=0){ toast('Enter a valid amount.','error'); return; }
-  recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim(),document.getElementById('mpAdv').value==='1');
+  var kind=payModalKind();
+  if(kind==='penalty'){
+    var loan=loans.find(function(x){ return x.id===lid; }), due=loan?loanPenaltyDue(loan):0;
+    if(amt>due+0.005){ toast('Amount is more than the penalty due ('+fmt(due)+').','error'); return; }
+  }
+  recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim(),document.getElementById('mpAdv').value==='1',kind);
   closeModal();
   navigate(location.hash||'#dashboard');
 }
@@ -874,17 +982,20 @@ function submitPay(){
   var amt=parseFloat((document.getElementById('pyAmt')||{}).value||0);
   if(!lid){ toast('Select a loan.','error'); return; }
   if(!amt||amt<=0){ toast('Enter a valid amount.','error'); return; }
-  recPay(lid,amt,(document.getElementById('pyDate')||{}).value||today(),(document.getElementById('pyNote')||{}).value||'');
+  var ln=loans.find(function(x){ return x.id===lid; });
+  var kind=ln&&loanOutstanding(ln)<=0&&loanPenaltyDue(ln)>0?'penalty':undefined; // installments done: only penalty is left
+  recPay(lid,amt,(document.getElementById('pyDate')||{}).value||today(),(document.getElementById('pyNote')||{}).value||'',undefined,kind);
   navigate('#payments');
 }
-function recPay(lid,amt,date,note,showAdvance){
+function recPay(lid,amt,date,note,showAdvance,kind){
   var loan=loans.find(function(x){ return x.id===lid; });
   var b=loan?borrowers.find(function(x){ return x.id===loan.borrowerId; }):null;
   var pid = uid();
   var pay={id:pid,loanId:lid,amount:amt,date:date,note:note,createdAt:new Date().toISOString()};
   if(showAdvance===false) pay.showAdvance=false;
+  if(kind==='penalty') pay.kind='penalty';
   payments.push(pay);
-  logActivity('payment','Payment of '+fmt(amt)+' recorded for '+(b?b.name:'loan'));
+  logActivity('payment',(kind==='penalty'?'Penalty payment of ':'Payment of ')+fmt(amt)+' recorded for '+(b?b.name:'loan'));
   save(); 
   toast(fmt(amt)+' payment recorded!');
   setTimeout(function(){ generateImageReceipt(pid); }, 700);
@@ -1033,7 +1144,7 @@ function renderCollections(){
     var l=loans.find(function(x){ return x.id===p.loanId; }), b=borrowerOf(l);
     if(!matches(b)) return;
     totColl+=p.amount; cntColl++;
-    rows.push({kind:'collected',date:p.date,loan:l,borrower:b,amount:p.amount,details:p.note||'Payment',payId:p.id});
+    rows.push({kind:'collected',date:p.date,loan:l,borrower:b,amount:p.amount,details:(isPenaltyPay(p)?'Penalty payment':'')+(p.note?(isPenaltyPay(p)?' · ':'')+p.note:(isPenaltyPay(p)?'':'Payment')),payId:p.id});
   });
   loans.forEach(function(l){
     var b=borrowerOf(l);
@@ -1101,7 +1212,7 @@ register('notifications', function(_, area) {
   } else {
     dueLoans.forEach(function(l){
       var b=borrowers.find(function(x){ return x.id===l.borrowerId; });
-      var out=loanOutstanding(l), ins=dueInstallments(l), first=ins[0];
+      var out=loanOutstanding(l), ins=dueInstallments(l), first=ins[0], pen=loanPenaltyDue(l);
       var amtDue=ins.reduce(function(s,i){ return s+i.amount; },0);
       var partial=loanPaid(l)>l.monthlyPayment*(first.period-1)+0.01;
       var diffDays=Math.round((new Date(first.date)-todayDate)/(1000*60*60*24));
@@ -1120,10 +1231,12 @@ register('notifications', function(_, area) {
           '<div style="font-size:11px;font-weight:400;color:var(--text-muted)">'+ins.map(function(i){
             var full=i.last?l.totalAmount-l.monthlyPayment*(l.term-1):l.monthlyPayment;
             return fmt(i.amount)+' of '+fmt(full)+(ins.length>1?' ('+fmtDate(i.date)+')':'');
-          }).join('<br>')+'</div></td>'+
+          }).join('<br>')+'</div>'+
+          (pen>0?'<div style="font-size:11px;font-weight:700;color:var(--danger)">+ '+fmt(pen)+' penalty</div>':'')+'</td>'+
         '<td data-label="Actions"><div class="td-actions">'+
           '<button class="icon-btn icon-btn-view" title="View Loan" onclick="location.hash=\'#loan-detail/'+l.id+'\'">👁</button>'+
           '<button class="icon-btn icon-btn-pay" title="Record Payment" onclick="openPayModal(\''+l.id+'\')">$</button>'+
+          (hasOverdueNotice(l)?'<button class="icon-btn icon-btn-delete" title="Generate Overdue Notice" onclick="generateOverdueNotice(\''+l.id+'\')">⚠</button>':'')+
         '</div></td></tr>';
     });
   }
@@ -1158,6 +1271,14 @@ register('settings', function(_, area) {
     '<div class="form-group"><label>Public Key</label><input class="form-control" id="stKey" value="' + (settings.emailjs_public_key || '') + '" placeholder="e.g. user_xxxx"></div>' +
     '<div class="form-group"><label>Auto-send on Generation</label><div style="margin-top:8px"><label class="btn-check"><input type="checkbox" id="stAuto" ' + (settings.auto_send ? 'checked' : '') + '> Enable automatic email sending</label></div></div>' +
     '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div></div>' +
+    '<div class="form-card" style="margin-top:24px"><div class="form-section-title">Late Payment Penalty</div>' +
+    '<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Charged on each borrower installment for every full week it stays unpaid past its due date. Applies to all loans, including penalties already charged, whenever these settings change.</p>' +
+    '<div class="form-grid">' +
+    '<div class="form-group"><label>Penalty</label><div style="margin-top:8px"><label class="btn-check"><input type="checkbox" id="stPenOn" ' + (settings.penalty_enabled !== false ? 'checked' : '') + '> Charge weekly late payment penalty</label></div></div>' +
+    '<div class="form-group"><label>Penalty Type</label><select class="form-control" id="stPenType"><option value="percent"' + (settings.penalty_type !== 'fixed' ? ' selected' : '') + '>% of unpaid installment per week</option><option value="fixed"' + (settings.penalty_type === 'fixed' ? ' selected' : '') + '>Fixed amount (PHP) per week</option></select></div>' +
+    '<div class="form-group"><label>Rate / Amount</label><input class="form-control" id="stPenRate" type="number" min="0" step="0.01" value="' + (+settings.penalty_rate || 0) + '"></div>' +
+    '<div class="form-group"><label>Grace Period (days)</label><input class="form-control" id="stPenGrace" type="number" min="0" step="1" value="' + (parseInt(settings.penalty_grace_days) || 0) + '"></div>' +
+    '</div><hr class="form-divider"><div class="form-actions"><button class="btn btn-primary" onclick="savePenaltySettings()">Save Penalty Settings</button></div></div>' +
     '<div class="form-card" style="margin-top:24px"><div class="form-section-title">Data Backup &amp; Restore</div>' +
     '<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Export all your data to a JSON file and import it on any browser to restore your loans, borrowers, payments, and settings.</p>' +
     '<div class="form-actions" style="gap:12px;flex-wrap:wrap;">' +
@@ -1165,6 +1286,19 @@ register('settings', function(_, area) {
     '<label class="btn btn-secondary" style="cursor:pointer;display:inline-flex;align-items:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import Data<input type="file" accept=".json" style="display:none" onchange="importData(event)"></label>' +
     '</div></div></div>';
 });
+
+function savePenaltySettings() {
+  var rate = parseFloat(document.getElementById('stPenRate').value);
+  var grace = parseInt(document.getElementById('stPenGrace').value);
+  if (isNaN(rate) || rate < 0) { toast('Enter a valid penalty rate.', 'error'); return; }
+  if (isNaN(grace) || grace < 0) { toast('Enter a valid grace period.', 'error'); return; }
+  settings.penalty_enabled = document.getElementById('stPenOn').checked;
+  settings.penalty_type = document.getElementById('stPenType').value;
+  settings.penalty_rate = rate;
+  settings.penalty_grace_days = grace;
+  save();
+  toast('Penalty settings saved!');
+}
 
 function saveSettings() {
   settings.emailjs_service = document.getElementById('stSvc').value.trim();
@@ -1467,7 +1601,9 @@ function createPDFObject(loanId) {
     '2. Term. The loan shall be payable over a period of ' + loan.term + ' months, commencing on ' + fmtLongDate(loan.startDate) + ' and maturing on ' + fmtLongDate(loan.dueDate) + '.',
     '3. Interest. The Borrower agrees to pay interest on the loan at the rate of ' + numberToWords(loan.rate) + ' percent (' + loan.rate + '%) of the monthly principal due.',
     '4. Repayment. Payments shall be made on or before each due date as set forth in the Amortization Schedule attached to this Agreement.',
-    '5. Late Payment. Any late payments may incur additional penalties, fees, or interest as determined by the Lender.'
+    '5. Late Payment. ' + (penaltyCfg().enabled && penaltyCfg().rate > 0
+      ? 'Any installment not paid on its due date shall incur a late payment penalty of ' + penaltyRuleText() + ', until the installment is fully paid.'
+      : 'Any late payments may incur additional penalties, fees, or interest as determined by the Lender.')
   ];
   if (loan.source === 'credit') {
     terms.push('6. Collateral (Purchased Items). Any item (including but not limited to mobile phones, gadgets, or devices) purchased using this credit card facility shall serve as collateral. If the loan remains unpaid for two (2) months, the purchased item will be retrieved or collected by the Lender, and shall only be returned once the outstanding loan or payment has been fully settled and paid.');
@@ -1851,13 +1987,14 @@ function generateImageReceipt(payId) {
   if (!loan) return;
   var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
   if (!b) return;
-  var pm = paymentMonth(payments, p, 'loanId', loan.monthlyPayment, loan.term, loan.totalAmount);
-  var showAdv = pm.advance > 0 && p.showAdvance !== false;
+  var isPen = isPenaltyPay(p);
+  var pm = isPen ? null : paymentMonth(payments.filter(function(x) { return !isPenaltyPay(x); }), p, 'loanId', loan.monthlyPayment, loan.term, loan.totalAmount);
+  var showAdv = !isPen && pm.advance > 0 && p.showAdvance !== false;
 
   var canvas = document.createElement('canvas');
   var ctx = canvas.getContext('2d');
-  
-  var W = 420, H = 750 + (showAdv ? 56 : 0);
+
+  var W = 420, H = 750 + (showAdv ? 56 : 0) - (isPen ? 40 : 0);
   var dpr = window.devicePixelRatio || 2;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
@@ -1931,7 +2068,7 @@ function generateImageReceipt(payId) {
   }
 
   drawRow('Recipient', b.name, false, true);
-  drawRow('Transaction Type', 'Loan Repayment', false, false);
+  drawRow('Transaction Type', isPen ? 'Late Payment Penalty' : 'Loan Repayment', false, false);
   drawRow('Reference No.', p.id.slice(-8).toUpperCase(), true, true);
   drawRow('Loan Reference', loan.id.slice(-6).toUpperCase(), false, false);
 
@@ -1945,9 +2082,13 @@ function generateImageReceipt(payId) {
   dy += 18; ctx.setLineDash([3, 3]); ctx.strokeStyle = '#d1d5db';
   ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke(); ctx.setLineDash([]);
 
-  dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Payment Month', dx, dy);
-  ctx.textAlign = 'right';
-  ctx.fillStyle = loanOutstanding(loan) <= 0 && pm.month >= loan.term ? '#16a34a' : '#0056d2'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(pm.month + '/' + loan.term, rightX, dy);
+  if (isPen) {
+    drawRow('Remaining Penalty', fmt(loanPenaltyDue(loan)), true, true);
+  } else {
+    dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px "Inter", "Segoe UI", sans-serif'; ctx.fillText('Payment Month', dx, dy);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = loanOutstanding(loan) <= 0 && pm.month >= loan.term ? '#16a34a' : '#0056d2'; ctx.font = 'bold 15px "Inter", "Segoe UI", sans-serif'; ctx.fillText(pm.month + '/' + loan.term, rightX, dy);
+  }
   if (showAdv) {
     rh = 28;
     drawRow(pm.month > 0 ? 'Advance' : 'Partial Payment', fmt(pm.advance), false, true);
@@ -1970,6 +2111,140 @@ function generateImageReceipt(payId) {
   link.download = 'Receipt_' + b.name.replace(/ /g, '_') + '_' + p.id.slice(-6).toUpperCase() + '.png';
   link.href = canvas.toDataURL('image/png', 1.0);
   link.click();
+}
+
+// ── Overdue / Penalty Notice (image, same style as the receipt) ──
+// Installments past their due date (not yet fully paid) plus unpaid penalty = what the borrower must settle
+function loanOverdueSummary(loan) {
+  var todayISO = isoLocal(new Date());
+  var od = loanUnpaidInstallments(loan).filter(function(i) { return i.date < todayISO; });
+  var amt = Math.round(od.reduce(function(s, i) { return s + i.amount; }, 0) * 100) / 100;
+  var pen = loanPenaltyDue(loan);
+  var days = od.length ? Math.round((new Date(todayISO) - new Date(od[0].date)) / 86400000) : 0;
+  return { installments: od, amount: amt, penalty: pen, total: Math.round((amt + pen) * 100) / 100, since: od.length ? od[0].date : null, days: days };
+}
+function hasOverdueNotice(loan) { var s = loanOverdueSummary(loan); return s.total > 0.005; }
+
+function generateOverdueNotice(loanId) {
+  var loan = loans.find(function(x) { return x.id === loanId; });
+  if (!loan) return;
+  var b = borrowers.find(function(x) { return x.id === loan.borrowerId; });
+  if (!b) return;
+  var s = loanOverdueSummary(loan);
+  if (s.total <= 0.005) { toast('This loan has no overdue balance or penalty.', 'info'); return; }
+
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  var W = 420, FONT = '"Inter", "Segoe UI", sans-serif';
+
+  // Letter body, wrapped to the card width (measured before sizing the canvas)
+  var letter = 'Dear ' + b.name + ',\n' +
+    'Our records show that your loan payment is overdue' + (s.since ? ' since ' + fmtDate(s.since) + ' (' + s.days + ' day' + (s.days === 1 ? '' : 's') + ')' : '') + '. ' +
+    (s.penalty > 0 ? 'Because of the delay, a late payment penalty has been charged: ' + penaltyRuleText() + '. ' : '') +
+    'Please settle the total amount of ' + fmt(s.total) + ' as soon as possible to avoid further penalties' + (penaltyCfg().enabled ? ' that are added every week the payment remains unpaid' : '') + '.\n' +
+    'If you have already paid, kindly disregard this notice. Thank you.';
+  ctx.font = '400 12px ' + FONT;
+  var textW = W - 40 - 48, lines = [];
+  letter.split('\n').forEach(function(para, pi) {
+    if (pi > 0) lines.push('');
+    var line = '';
+    para.split(' ').forEach(function(word) {
+      var test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > textW && line) { lines.push(line); line = word; } else line = test;
+    });
+    lines.push(line);
+  });
+
+  var rows = 7 + (s.since ? 2 : 0);
+  var H = 260 + 60 + rows * 34 + 40 + lines.length * 18 + 110;
+  var dpr = window.devicePixelRatio || 2;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
+
+  ctx.fillStyle = '#f0f2f5'; ctx.fillRect(0, 0, W, H);
+
+  // Header — red gradient with rounded bottom corners
+  var headerH = 220;
+  var hGrad = ctx.createLinearGradient(0, 0, W, headerH);
+  hGrad.addColorStop(0, '#f43f5e'); hGrad.addColorStop(0.5, '#dc2626'); hGrad.addColorStop(1, '#991b1b');
+  ctx.fillStyle = hGrad;
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(W, 0); ctx.lineTo(W, headerH - 25);
+  ctx.quadraticCurveTo(W, headerH, W - 25, headerH); ctx.lineTo(25, headerH);
+  ctx.quadraticCurveTo(0, headerH, 0, headerH - 25); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 0.06; ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(60, 40, 80, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(360, 180, 100, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1.0;
+
+  // Warning icon
+  var cx = W / 2, cy = 65;
+  ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, 24, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+  ctx.fillStyle = '#dc2626'; ctx.textAlign = 'center'; ctx.font = 'bold 30px ' + FONT; ctx.fillText('!', cx, cy + 11);
+
+  ctx.fillStyle = '#ffffff'; ctx.font = '600 18px ' + FONT;
+  ctx.fillText(s.penalty > 0 ? 'Overdue Payment & Penalty Notice' : 'Overdue Payment Notice', cx, cy + 55);
+  ctx.font = 'bold 40px ' + FONT; ctx.fillText(fmt(s.total), cx, cy + 103);
+  ctx.font = '300 13px ' + FONT; ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillText('Amount to settle · as of ' + new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }), cx, cy + 128);
+
+  // White card
+  var cardX = 20, cardY = headerH + 15, cardW = W - 40, cardH = H - cardY - 70, radius = 16;
+  ctx.shadowColor = 'rgba(0,0,0,0.08)'; ctx.shadowBlur = 15; ctx.shadowOffsetY = 4;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(cardX + radius, cardY); ctx.lineTo(cardX + cardW - radius, cardY);
+  ctx.quadraticCurveTo(cardX + cardW, cardY, cardX + cardW, cardY + radius); ctx.lineTo(cardX + cardW, cardY + cardH - radius);
+  ctx.quadraticCurveTo(cardX + cardW, cardY + cardH, cardX + cardW - radius, cardY + cardH); ctx.lineTo(cardX + radius, cardY + cardH);
+  ctx.quadraticCurveTo(cardX, cardY + cardH, cardX, cardY + cardH - radius); ctx.lineTo(cardX, cardY + radius);
+  ctx.quadraticCurveTo(cardX, cardY, cardX + radius, cardY); ctx.closePath(); ctx.fill();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+  var dx = cardX + 24, dy = cardY + 30, rightX = cardX + cardW - 24, rh = 34;
+  ctx.textAlign = 'left'; ctx.fillStyle = '#dc2626'; ctx.font = '700 11px ' + FONT;
+  ctx.fillText('NOTICE DETAILS', dx, dy);
+  dy += 12; ctx.strokeStyle = '#e8ecf1'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke();
+  dy += 4;
+  function drawRow(label, value, color, isBold) {
+    dy += rh; ctx.textAlign = 'left'; ctx.fillStyle = '#6b7280'; ctx.font = '400 12px ' + FONT; ctx.fillText(label, dx, dy);
+    ctx.textAlign = 'right'; ctx.fillStyle = color || '#1f2937'; ctx.font = (isBold ? 'bold ' : '500 ') + '13px ' + FONT; ctx.fillText(value, rightX, dy);
+  }
+  function divider() { dy += 16; ctx.setLineDash([3, 3]); ctx.strokeStyle = '#d1d5db'; ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(rightX, dy); ctx.stroke(); ctx.setLineDash([]); }
+
+  drawRow('Borrower', b.name, null, true);
+  drawRow('Loan Reference', loan.id.slice(-6).toUpperCase(), '#dc2626', true);
+  if (s.since) {
+    drawRow('Overdue Since', fmtDate(s.since), null, false);
+    drawRow('Days Overdue', s.days + ' day' + (s.days === 1 ? '' : 's'), '#dc2626', true);
+  }
+  drawRow('Overdue Installments', String(s.installments.length), null, false);
+  divider();
+  drawRow('Overdue Amount', fmt(s.amount), null, true);
+  drawRow('Penalty Charges', fmt(s.penalty), '#dc2626', true);
+  drawRow('Total to Settle', fmt(s.total), '#dc2626', true);
+  drawRow('Remaining Loan Balance', fmt(loanOutstanding(loan)), null, false);
+  divider();
+
+  dy += 26; ctx.textAlign = 'left'; ctx.fillStyle = '#374151'; ctx.font = '400 12px ' + FONT;
+  lines.forEach(function(l) { ctx.fillText(l, dx, dy); dy += 18; });
+
+  dy += 14; ctx.textAlign = 'right'; ctx.fillStyle = '#1f2937'; ctx.font = 'bold 12px ' + FONT;
+  ctx.fillText(LENDER_NAME, rightX, dy);
+  ctx.font = '400 11px ' + FONT; ctx.fillStyle = '#6b7280';
+  ctx.fillText('partner ' + LENDER_PARTNER, rightX, dy + 16);
+
+  ctx.textAlign = 'center'; ctx.fillStyle = '#9ca3af'; ctx.font = '400 10px ' + FONT;
+  ctx.fillText('Powered by Hiramo · Loan Management System', W / 2, H - 38);
+  ctx.font = '400 9px ' + FONT; ctx.fillStyle = '#b0b8c4';
+  ctx.fillText('This is a system-generated notice. No signature required.', W / 2, H - 22);
+
+  var link = document.createElement('a');
+  link.download = 'Overdue_Notice_' + b.name.replace(/ /g, '_') + '_' + loan.id.slice(-6).toUpperCase() + '.png';
+  link.href = canvas.toDataURL('image/png', 1.0);
+  link.click();
+  logActivity('overdue', 'Overdue notice generated for ' + b.name + ' (' + fmt(s.total) + ')');
 }
 
 // ── Seed Demo Data ─────────────────────────────────────────

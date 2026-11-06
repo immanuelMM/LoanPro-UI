@@ -52,6 +52,12 @@ All data is stored in the browser's `localStorage` as JSON strings.
   "createdAt": "2026-03-21T10:00:00.125Z"
 }
 ```
+Penalty payments carry `"kind": "penalty"`; they reduce the penalty due, not the loan balance.
+
+### Late Payment Penalty
+Each installment still unpaid a full week after its due date (plus `penalty_grace_days`) is charged a
+penalty, and again for every further week it stays unpaid. Charges are computed from payment history
+(not stored). Loans may carry `penaltyWaived` (amount waived) and `closedAt` (penalties stop accruing then).
 
 ### 4. Activity Schema (`lp_activity`)
 ```json
@@ -69,6 +75,11 @@ All data is stored in the browser's `localStorage` as JSON strings.
   "emailjs_service": "default_service",
   "emailjs_template": "template_53kpkj7",
   "emailjs_public_key": "QsV4vGpnW4fLkBGMU",
-  "auto_send": true
+  "auto_send": true,
+  "penalty_enabled": true,
+  "penalty_type": "percent",
+  "penalty_rate": 5,
+  "penalty_grace_days": 0
 }
 ```
+`penalty_type` is `percent` (% of the unpaid installment per week) or `fixed` (PHP per installment per week).
