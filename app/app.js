@@ -937,10 +937,37 @@ function openPayModal(loanId,kind){
       '<button type="button" class="btn btn-secondary" id="mpAdvNo" onclick="setPayAdvance(\''+loanId+'\',false)">No</button>'+
     '</div><input type="hidden" id="mpAdv" value="1"><div id="mpPreview" style="margin-top:10px"></div></div>'+
     '<div class="form-group"><label>Date</label><input class="form-control" id="mpDate" type="date" value="'+today()+'"></div>'+
+    payComakerPickerHTML(loan)+
     '<div class="form-group"><label>Note</label><input class="form-control" id="mpNote" placeholder="Optional..."></div></div>',
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitModalPay(\''+loanId+'\')">Record</button>'
   );
   updatePayPreview(loanId);
+}
+function loanComakerList(loan){
+  return (loan.comakers||[]).map(function(cm){ return (cm.name||'').trim(); }).filter(Boolean);
+}
+function loanComakerNames(loan){ return loanComakerList(loan).join(', '); }
+// Co-makers are fetched from the loan and shown as checkboxes, all ticked: a single co-maker is one
+// checkbox, two or more let the user pick which ones print. Loans without co-makers show no picker
+function payComakerPickerHTML(loan){
+  var list=loanComakerList(loan);
+  if(!list.length) return '';
+  return '<div class="form-group"><label>Show Co-Maker on receipt</label><div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">'+
+    list.map(function(name,i){
+      return '<label class="btn-check" style="text-transform:none;letter-spacing:normal;font-size:13px;font-weight:500;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;gap:8px"><input type="checkbox" class="mpCmChk" value="'+ccEsc(name)+'" checked> '+(list.length>1?'Co-Maker '+(i+1)+': ':'')+ccEsc(name)+'</label>';
+    }).join('')+'</div></div>';
+}
+// Checked names joined for storage; undefined when the loan has no co-makers (nothing to choose)
+function payComakerSelection(){
+  var boxes=document.querySelectorAll('.mpCmChk');
+  if(!boxes.length) return undefined;
+  return Array.prototype.filter.call(boxes,function(c){ return c.checked; }).map(function(c){ return c.value; }).join(', ');
+}
+// Co-maker names printed on a payment's receipt. Payments recorded before this field existed (or from the
+// Payments page) fall back to the loan's co-makers; an empty string means the user chose to leave it off
+function receiptComakers(p,loan){
+  var s=typeof p.comaker==='string'?p.comaker:loanComakerNames(loan);
+  return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean);
 }
 // The penalty preview row only exists when the modal is in penalty mode
 function payModalKind(){ return document.getElementById('mpPenPreview')?'penalty':'installment'; }
@@ -973,7 +1000,7 @@ function submitModalPay(lid){
     var loan=loans.find(function(x){ return x.id===lid; }), due=loan?loanPenaltyDue(loan):0;
     if(amt>due+0.005){ toast('Amount is more than the penalty due ('+fmt(due)+').','error'); return; }
   }
-  recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim(),document.getElementById('mpAdv').value==='1',kind);
+  recPay(lid,amt,document.getElementById('mpDate').value,document.getElementById('mpNote').value.trim(),document.getElementById('mpAdv').value==='1',kind,payComakerSelection());
   closeModal();
   navigate(location.hash||'#dashboard');
 }
@@ -987,13 +1014,14 @@ function submitPay(){
   recPay(lid,amt,(document.getElementById('pyDate')||{}).value||today(),(document.getElementById('pyNote')||{}).value||'',undefined,kind);
   navigate('#payments');
 }
-function recPay(lid,amt,date,note,showAdvance,kind){
+function recPay(lid,amt,date,note,showAdvance,kind,comaker){
   var loan=loans.find(function(x){ return x.id===lid; });
   var b=loan?borrowers.find(function(x){ return x.id===loan.borrowerId; }):null;
   var pid = uid();
   var pay={id:pid,loanId:lid,amount:amt,date:date,note:note,createdAt:new Date().toISOString()};
   if(showAdvance===false) pay.showAdvance=false;
   if(kind==='penalty') pay.kind='penalty';
+  if(typeof comaker==='string') pay.comaker=comaker;
   payments.push(pay);
   logActivity('payment',(kind==='penalty'?'Penalty payment of ':'Payment of ')+fmt(amt)+' recorded for '+(b?b.name:'loan'));
   save(); 
@@ -1994,7 +2022,8 @@ function generateImageReceipt(payId) {
   var canvas = document.createElement('canvas');
   var ctx = canvas.getContext('2d');
 
-  var W = 420, H = 750 + (showAdv ? 56 : 0) - (isPen ? 40 : 0);
+  var cms = receiptComakers(p, loan);
+  var W = 420, H = 750 + (showAdv ? 56 : 0) - (isPen ? 40 : 0) + cms.length * 36;
   var dpr = window.devicePixelRatio || 2;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
@@ -2068,6 +2097,11 @@ function generateImageReceipt(payId) {
   }
 
   drawRow('Recipient', b.name, false, true);
+  cms.forEach(function(name, i) {
+    var maxW = cardW - 48 - 110; ctx.font = 'bold 13px "Inter", "Segoe UI", sans-serif';
+    while (name.length > 1 && ctx.measureText(name).width > maxW) name = name.slice(0, -2) + '…';
+    drawRow(cms.length > 1 ? 'Co-Maker ' + (i + 1) : 'Co-Maker', name, false, true);
+  });
   drawRow('Transaction Type', isPen ? 'Late Payment Penalty' : 'Loan Repayment', false, false);
   drawRow('Reference No.', p.id.slice(-8).toUpperCase(), true, true);
   drawRow('Loan Reference', loan.id.slice(-6).toUpperCase(), false, false);
